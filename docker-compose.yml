@@ -1,0 +1,44 @@
+services:
+  web:
+    build: .
+    ports:
+      - "${WEB_PORT:-8000}:${WEB_PORT:-8000}"
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgres://${POSTGRES_USER:-doorito}:${POSTGRES_PASSWORD:-doorito}@db:5432/${POSTGRES_DB:-doorito}
+      - CELERY_BROKER_URL=sqla+postgresql://${POSTGRES_USER:-doorito}:${POSTGRES_PASSWORD:-doorito}@db:5432/${POSTGRES_DB:-doorito}
+      - RUN_MIGRATIONS=true
+      - WEB_PORT=${WEB_PORT:-8000}
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-doorito}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-doorito}
+      - POSTGRES_DB=${POSTGRES_DB:-doorito}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-doorito}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  celery-worker:
+    build: .
+    command: celery-worker
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgres://${POSTGRES_USER:-doorito}:${POSTGRES_PASSWORD:-doorito}@db:5432/${POSTGRES_DB:-doorito}
+      - CELERY_BROKER_URL=sqla+postgresql://${POSTGRES_USER:-doorito}:${POSTGRES_PASSWORD:-doorito}@db:5432/${POSTGRES_DB:-doorito}
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  postgres_data:

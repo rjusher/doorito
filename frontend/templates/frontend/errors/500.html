@@ -1,0 +1,10 @@
+{% extends "frontend/base_minimal.html" %}
+
+{% block page_title %}Something Went Wrong — Doorito{% endblock %}
+
+{% block minimal_content %}
+<h2 class="text-4xl font-bold text-neutral-300 mb-2">500</h2>
+<h3 class="text-xl font-semibold text-neutral-900 mb-2">Something went wrong</h3>
+<p class="text-sm text-neutral-500 mb-6">We're experiencing an issue. Please try again.</p>
+<button onclick="location.reload()" class="inline-block px-4 py-2 text-sm font-medium text-white bg-primary-600 hover:bg-primary-700 rounded-lg">Try Again</button>
+{% endblock %}

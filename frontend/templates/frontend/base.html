@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}{% block page_title %}Doorito{% endblock %}{% endblock %}
+
+{% block content %}
+<div x-data="{ sidebarOpen: localStorage.getItem('doorito:sidebar-collapsed') !== 'true', mobileOpen: false }"
+     x-init="$watch('sidebarOpen', val => localStorage.setItem('doorito:sidebar-collapsed', val ? 'false' : 'true'))"
+     class="min-h-screen bg-neutral-50">
+
+  {# ── Mobile Header (hamburger + logo, < md only) ────────────────── #}
+  <header class="md:hidden fixed top-0 left-0 right-0 z-40 h-12 bg-white border-b border-neutral-200 flex items-center px-4">
+    <button @click="mobileOpen = !mobileOpen" class="text-neutral-600 hover:text-neutral-900 mr-3 min-h-[44px] min-w-[44px] flex items-center justify-center">
+      <svg class="w-6 h-6" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5"/></svg>
+    </button>
+    <a href="{% url 'frontend:dashboard' %}" class="text-lg font-bold text-primary-600">
+      Doorito
+    </a>
+  </header>
+
+  {# ── Sidebar ────────────────────────────────────────────────────── #}
+  {% include "frontend/components/sidebar.html" %}
+
+  {# ── Main Content ───────────────────────────────────────────────── #}
+  <main class="transition-all duration-200 mt-12 md:mt-0 p-4 lg:p-6"
+        :class="sidebarOpen ? 'md:ml-64' : 'md:ml-16'">
+    <div>
+      {# Page Header #}
+      <div class="flex items-center justify-between mb-6">
+        <h1 class="text-2xl font-bold text-neutral-900">
+          {% block page_header %}{% endblock %}
+        </h1>
+        <div class="flex items-center gap-2">
+          {% block page_header_actions %}{% endblock %}
+        </div>
+      </div>
+
+      {# Content Area #}
+      {% block page_content %}{% endblock %}
+    </div>
+  </main>
+
+  {# ── Toast Notifications ────────────────────────────────────────── #}
+  {% include "frontend/components/toast.html" %}
+</div>
+{% endblock %}

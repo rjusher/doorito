@@ -1,0 +1,140 @@
+@import "tailwindcss";
+
+/* Source paths for Tailwind to scan for class usage */
+@source "../../templates/**/*.html";
+@source "../../*/templates/**/*.html";
+
+/*
+ * Doorito Design Tokens
+ *
+ * Tailwind v4 @theme values become both utility classes (bg-primary-500)
+ * and CSS custom properties (var(--color-primary-500)).
+ */
+@theme {
+  /* ── Primary: Purple ─────────────────────────────────────────────── */
+  --color-primary-50: #faf5ff;
+  --color-primary-100: #f3e8ff;
+  --color-primary-200: #e9d5ff;
+  --color-primary-300: #d8b4fe;
+  --color-primary-400: #c084fc;
+  --color-primary-500: #a855f7;
+  --color-primary-600: #9333ea;
+  --color-primary-700: #7e22ce;
+  --color-primary-800: #6b21a8;
+  --color-primary-900: #581c87;
+  --color-primary-950: #3b0764;
+
+  /* ── Secondary: Teal ─────────────────────────────────────────────── */
+  --color-secondary-50: #f0fdfa;
+  --color-secondary-100: #ccfbf1;
+  --color-secondary-200: #99f6e4;
+  --color-secondary-300: #5eead4;
+  --color-secondary-400: #2dd4bf;
+  --color-secondary-500: #14b8a6;
+  --color-secondary-600: #0d9488;
+  --color-secondary-700: #0f766e;
+  --color-secondary-800: #115e59;
+  --color-secondary-900: #134e4a;
+  --color-secondary-950: #042f2e;
+
+  /* ── Accent: Amber ───────────────────────────────────────────────── */
+  --color-accent-50: #fffbeb;
+  --color-accent-100: #fef3c7;
+  --color-accent-200: #fde68a;
+  --color-accent-300: #fcd34d;
+  --color-accent-400: #fbbf24;
+  --color-accent-500: #f59e0b;
+  --color-accent-600: #d97706;
+  --color-accent-700: #b45309;
+  --color-accent-800: #92400e;
+  --color-accent-900: #78350f;
+  --color-accent-950: #451a03;
+
+  /* ── Neutral: Slate ──────────────────────────────────────────────── */
+  --color-neutral-50: #f8fafc;
+  --color-neutral-100: #f1f5f9;
+  --color-neutral-200: #e2e8f0;
+  --color-neutral-300: #cbd5e1;
+  --color-neutral-400: #94a3b8;
+  --color-neutral-500: #64748b;
+  --color-neutral-600: #475569;
+  --color-neutral-700: #334155;
+  --color-neutral-800: #1e293b;
+  --color-neutral-900: #0f172a;
+  --color-neutral-950: #020617;
+
+  /* ── State: Success (green, minimal scale) ───────────────────────── */
+  --color-success-50: #f0fdf4;
+  --color-success-500: #22c55e;
+  --color-success-600: #16a34a;
+  --color-success-700: #15803d;
+
+  /* ── State: Warning (amber, minimal scale) ───────────────────────── */
+  --color-warning-50: #fffbeb;
+  --color-warning-500: #f59e0b;
+  --color-warning-600: #d97706;
+  --color-warning-700: #b45309;
+
+  /* ── State: Danger (red, minimal scale) ──────────────────────────── */
+  --color-danger-50: #fef2f2;
+  --color-danger-500: #ef4444;
+  --color-danger-600: #dc2626;
+  --color-danger-700: #b91c1c;
+
+  /* ── State: Info (blue, minimal scale) ───────────────────────────── */
+  --color-info-50: #eff6ff;
+  --color-info-500: #3b82f6;
+  --color-info-600: #2563eb;
+  --color-info-700: #1d4ed8;
+
+  /* ── Typography ──────────────────────────────────────────────────── */
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco,
+    Consolas, monospace;
+}
+
+/* ── Alpine.js x-cloak: hide elements until Alpine initializes ─────── */
+[x-cloak] {
+  display: none !important;
+}
+
+/* ── Semantic Surface & Interactive Tokens ──────────────────────────── */
+@layer base {
+  :root {
+    /* Surface colors */
+    --surface-page: var(--color-neutral-50);
+    --surface-card: #ffffff;
+    --surface-sidebar: var(--color-neutral-900);
+
+    /* Text colors */
+    --text-primary: var(--color-neutral-900);
+    --text-secondary: var(--color-neutral-600);
+    --text-muted: var(--color-neutral-400);
+    --text-on-primary: #ffffff;
+    --text-on-sidebar: var(--color-neutral-100);
+
+    /* Interactive colors */
+    --interactive-link: var(--color-primary-600);
+    --interactive-link-hover: var(--color-primary-700);
+    --interactive-focus: var(--color-primary-500);
+
+    /* Border colors */
+    --border-default: var(--color-neutral-200);
+    --border-strong: var(--color-neutral-300);
+  }
+
+  /* ── Interactive Cursor ───────────────────────────────────────────── */
+  button,
+  a[href],
+  select,
+  label,
+  summary,
+  [role="button"],
+  [tabindex]:not([tabindex="-1"]),
+  input[type="checkbox"],
+  input[type="radio"] {
+    cursor: pointer;
+  }
+
+}

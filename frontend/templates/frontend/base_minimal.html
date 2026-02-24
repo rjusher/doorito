@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}{% block page_title %}Doorito{% endblock %}{% endblock %}
+
+{% block content %}
+<div class="flex items-center justify-center min-h-screen bg-neutral-50">
+  <div class="text-center px-4 max-w-md">
+    {% block minimal_content %}{% endblock %}
+  </div>
+</div>
+{% endblock %}

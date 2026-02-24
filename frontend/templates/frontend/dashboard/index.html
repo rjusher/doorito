@@ -1,0 +1,32 @@
+{% extends "frontend/base.html" %}
+
+{% block page_title %}Dashboard — Doorito{% endblock %}
+{% block page_header %}Dashboard{% endblock %}
+{% block sidebar_active %}dashboard{% endblock %}
+
+{% block page_content %}
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+  {# Placeholder cards — replace with your own content #}
+  <div class="bg-white rounded-lg border border-neutral-200 p-6">
+    <h3 class="text-sm font-medium text-neutral-500 mb-1">Welcome</h3>
+    <p class="text-2xl font-bold text-neutral-900">Hello, {{ user.get_short_name|default:user.username }}!</p>
+    <p class="text-sm text-neutral-500 mt-2">This is your Doorito dashboard.</p>
+  </div>
+
+  <div class="bg-white rounded-lg border border-neutral-200 p-6">
+    <h3 class="text-sm font-medium text-neutral-500 mb-1">Getting Started</h3>
+    <p class="text-sm text-neutral-600 mt-2">
+      Start building your app by adding views, models, and templates.
+      Check the PEPs directory for the enhancement proposal workflow.
+    </p>
+  </div>
+
+  <div class="bg-white rounded-lg border border-neutral-200 p-6">
+    <h3 class="text-sm font-medium text-neutral-500 mb-1">Admin</h3>
+    <p class="text-sm text-neutral-600 mt-2">
+      <a href="/admin/" class="text-primary-600 hover:text-primary-700 hover:underline">Open Django Admin</a>
+      to manage users and data.
+    </p>
+  </div>
+</div>
+{% endblock %}

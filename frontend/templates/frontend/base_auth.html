@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}{% block page_title %}Doorito{% endblock %}{% endblock %}
+
+{% block content %}
+<div class="flex items-center justify-center min-h-screen bg-neutral-50">
+  <div class="w-full max-w-sm px-4">
+    {# Logo #}
+    <div class="text-center mb-8">
+      <h1 class="text-3xl font-bold text-primary-600">Doorito</h1>
+      <p class="text-sm text-neutral-500 mt-1">Django Project Skeleton</p>
+    </div>
+
+    {# Auth Card #}
+    <div class="bg-white shadow-lg rounded-lg p-8">
+      {% block auth_content %}{% endblock %}
+    </div>
+
+    {# Footer #}
+    <p class="text-sm text-neutral-400 mt-8 text-center">&copy; 2026 Doorito</p>
+  </div>
+</div>
+{% endblock %}

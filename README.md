@@ -139,4 +139,4 @@ All development is tracked through PEPs in the `PEPs/` directory. See [PEPs/ABOU
 
 ## License
 
-MIT
+[Business Source License 1.1](LICENSE.md) — you can use, modify, and redistribute Doorito, but you may not offer it as a hosted service competing with the Licensor. Each version converts to Apache 2.0 four years after release.

@@ -68,30 +68,53 @@ The web server runs at `http://localhost:8000`.
 docker compose up --build
 
 # In another terminal — create a superuser
-docker compose exec web manage createsuperuser
+docker compose run --rm web manage createsuperuser
 ```
 
 Services: **web** (8000, gunicorn), **db** (PostgreSQL 16), **celery-worker**.
+
+### Docker Development
+
+A `docker-compose.dev.yml` override runs the full stack with Dev settings (runserver with auto-reload, eager Celery, DEBUG=True):
+
+```bash
+# Start dev stack (web + db)
+make docker-up
+
+# Stop dev stack
+make docker-down
+
+# Tail logs
+make docker-logs
+
+# Shell into web container
+make docker-shell
+
+# Opt into celery container (non-eager task processing)
+docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile celery up --build
+```
 
 ## Project Structure
 
 ```
 doorito/
-├── boot/               # Django project config (settings, urls, wsgi, asgi, celery)
-├── common/             # Shared utilities: TimeStampedModel, MoneyField
-├── accounts/           # Custom User model (email-based, extends AbstractUser)
-├── frontend/           # Web UI: auth, dashboard — server-rendered with HTMX + Alpine.js
-├── aikb/               # AI knowledge base for agent context (11 files)
-├── PEPs/               # Project Enhancement Proposals
-├── static/             # CSS (Tailwind input + compiled), JS (HTMX, Alpine.js)
-├── templates/          # Global base template
-├── scripts/            # PEP helper scripts and Claude prompt templates
-├── doorito             # Click CLI entry point
-├── Makefile            # Developer convenience targets
-├── Procfile.dev        # Development process definitions (honcho)
-├── docker-compose.yml  # Docker Compose configuration
-├── Dockerfile          # Container image definition
-└── manage.py           # Django management script
+├── boot/                   # Django project config (settings, urls, wsgi, asgi, celery)
+├── common/                 # Shared utilities: TimeStampedModel, MoneyField
+├── accounts/               # Custom User model (email-based, extends AbstractUser)
+├── frontend/               # Web UI: auth, dashboard — server-rendered with HTMX + Alpine.js
+├── aikb/                   # AI knowledge base for agent context (11 files)
+├── PEPs/                   # Project Enhancement Proposals
+├── static/                 # CSS (Tailwind input + compiled), JS (HTMX, Alpine.js)
+├── templates/              # Global base template
+├── scripts/                # PEP helper scripts and Claude prompt templates
+├── doorito                 # Click CLI entry point
+├── Makefile                # Developer convenience targets
+├── Procfile.dev            # Development process definitions (honcho)
+├── docker-compose.yml      # Production Docker Compose
+├── docker-compose.dev.yml  # Development Docker Compose override
+├── Dockerfile              # Container image definition
+├── LICENSE.md              # Business Source License 1.1
+└── manage.py               # Django management script
 ```
 
 ## Development Workflow
@@ -115,6 +138,10 @@ The [Makefile](Makefile) wraps common commands:
 | `make clean` | Remove Python cache files |
 | `make css` | Compile Tailwind CSS |
 | `make css-watch` | Watch and recompile CSS |
+| `make docker-up` | Start dev stack in Docker |
+| `make docker-down` | Stop Docker dev stack |
+| `make docker-logs` | Tail Docker dev stack logs |
+| `make docker-shell` | Shell into web container |
 
 ## Configuration
 

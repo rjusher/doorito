@@ -125,7 +125,7 @@ source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=
 
 The project includes a `Makefile` that wraps common commands. Human developers should use `make <target>` directly. Claude Code should continue using the explicit `source ... && DJANGO_SETTINGS_MODULE=... python manage.py` pattern above (since `make` doesn't activate the virtualenv).
 
-Key targets: `make help`, `make install`, `make migrate`, `make makemigrations`, `make run`, `make server`, `make shell`, `make test`, `make lint`, `make format`, `make check`, `make superuser`, `make clean`, `make tailwind-install`, `make css`, `make css-watch`, `make pep-new TITLE=name`, `make pep-complete PEP=NNNN`, `make pep-archive`.
+Key targets: `make help`, `make install`, `make migrate`, `make makemigrations`, `make run`, `make server`, `make shell`, `make test`, `make lint`, `make format`, `make check`, `make superuser`, `make clean`, `make tailwind-install`, `make css`, `make css-watch`, `make docker-up`, `make docker-down`, `make docker-logs`, `make docker-shell`, `make pep-new TITLE=name`, `make pep-complete PEP=NNNN`, `make pep-archive`.
 
 Claude PEP workflow targets (invoke `claude -p` with structured prompts):
 - `make claude-pep-draft DESC="description"` — Draft a new PEP (Claude infers title, runs pep-new.sh, fills summary and plan)
@@ -341,8 +341,7 @@ The sidebar (`components/sidebar.html`) provides navigation with collapsible des
 
 ### Storage Configuration
 
-- **Development**: WhiteNoise serves static files locally
-- **Production**: WhiteNoise with `CompressedManifestStaticFilesStorage`
+- **Both environments**: WhiteNoise with `CompressedManifestStaticFilesStorage` for static files
 
 ### Background Task Infrastructure
 

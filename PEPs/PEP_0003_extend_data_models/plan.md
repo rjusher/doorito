@@ -14,649 +14,1252 @@
 
 Before implementation, these decisions from [discussions.md](discussions.md) are resolved in this plan:
 
-**Q1 — TimeStampedModel vs explicit timestamps**: **Use `TimeStampedModel`** for all 5 models. This is consistent with the project convention in `aikb/models.md` ("All future models should inherit from TimeStampedModel"). Models needing additional timestamp fields (`PortalEventOutbox.delivered_at`) add them alongside inherited `created_at`/`updated_at`. This reduces boilerplate and maintains consistency.
+**Q1 — TimeStampedModel vs explicit timestamps**: **Use `TimeStampedModel`** for all 4 models. Consistent with `aikb/models.md` ("All future models should inherit from TimeStampedModel"). `TimeStampedModel` is defined in `common/models.py:6-13` and provides `created_at` (auto_now_add) and `updated_at` (auto_now).
 
-**Q2 — Existing services, tasks, and tests**: **Delete them**. The existing `uploads/services/uploads.py`, `uploads/tasks.py`, and `uploads/tests/` are tightly coupled to `FileField` and the old status lifecycle (`pending/ready/consumed/failed`). They cannot be incrementally adapted. New model-level tests will be written; service and task logic will be rebuilt in a future PEP.
+**Q2 — Existing services, tasks, and tests**: **Rewrite them**. The existing `uploads/services/uploads.py` (3 functions: `validate_file`, `create_ingest_file`, `consume_ingest_file`), `uploads/tasks.py` (`cleanup_expired_ingest_files_task`), and `uploads/tests/` (15 tests) are tightly coupled to the old status lifecycle (`pending/ready/consumed/failed`). They will be deleted and replaced.
 
-**Q3 — PEP 0002 dependency**: **Require PEP 0002 completion first**. PEP 0002's code-level renames (admin, services, tasks, tests, aikb) must be done before PEP 0003 starts. The PEP 0002 database migration is moot (since PEP 0003 drops the table), but the code renames ensure a clean starting point with consistent `IngestFile` naming everywhere.
+**Q3 — PEP 0002 dependency**: **Require PEP 0002 completion first**. PEP 0002 is finalized (commit `27382c6`). The code currently uses `IngestFile` naming.
+
+**Q4 — PEP scope: models only vs models + services**: **Include services**. All 4 models and their core services will be delivered in this PEP.
+
+**Q5 — FileField retained**: Django's `FileField` is kept. No abstract storage pointers.
+
+**Q6 — IngestFile → UploadFile rename**: All models use `Upload*` prefix.
+
+**Q7 — PROCESSED status added**: Full lifecycle: `uploading → stored → processed / deleted` and `uploading → failed`.
+
+**Q8 — No denormalized counters**: Use `batch.files.filter(status=...).count()`.
+
+**Q9 — Event outbox deferred**: `PortalEventOutbox` removed from scope. Deferred to PEP 0004.
+
+**Q10 — UUID v7 via uuid_utils**: Use `uuid_utils.uuid7()` for all PK defaults. **Critical implementation note**: `uuid_utils.UUID` is NOT a subclass of `uuid.UUID`. Django's `UUIDField.get_prep_value()` fails with raw `uuid_utils.UUID` objects. A wrapper function must convert to stdlib `uuid.UUID`: `uuid.UUID(bytes=uuid_utils.uuid7().bytes)`. This wrapper will be placed in `common/utils.py`.
+
+**Q11 — Service signatures alongside models**: Each model section lists associated service functions.
 
 ---
 
 ## Context Files
 
-Read these files before starting implementation:
+Read these files before implementing any step:
 
-| File | Reason |
-|------|--------|
-| `PEPs/PEP_0003_extend_data_models/summary.md` | Acceptance criteria, model field definitions, ER diagram, out-of-scope boundaries |
-| `PEPs/PEP_0003_extend_data_models/research.md` | Current state analysis, technical constraints (UUID PKs, JSONField, cascade rules), pattern analysis, risk assessment |
-| `PEPs/PEP_0003_extend_data_models/discussions.md` | Resolved design decisions (TimeStampedModel, services/tasks fate, PEP 0002 dependency) |
-| `uploads/models.py` | Current `IngestFile` model (58 lines) — being replaced. Study `Status` inner class pattern, `Meta` options, `__str__` pattern |
-| `uploads/admin.py` | Current `IngestFileAdmin` (32 lines) — being replaced with 5 admin classes |
-| `uploads/services/uploads.py` | Current services (133 lines) — `validate_file`, `create_ingest_file`, `consume_ingest_file` — being deleted |
-| `uploads/tasks.py` | Current `cleanup_expired_ingest_files_task` (67 lines) — being deleted |
-| `uploads/tests/test_services.py` | Current 10 service tests (145 lines) — being deleted |
-| `uploads/tests/test_tasks.py` | Current 5 task tests (104 lines) — being deleted and replaced with model tests |
-| `uploads/apps.py` | `UploadsConfig` with `default_auto_field = "django.db.models.BigAutoField"` — UUID models need explicit `id` field |
-| `uploads/migrations/0001_initial.py` | Current migration (84 lines) — being deleted and regenerated |
-| `common/models.py` | `TimeStampedModel` abstract base (14 lines) — base class for all new models |
-| `common/fields.py` | `MoneyField` example (26 lines) — pattern reference for custom field `deconstruct()` |
-| `accounts/models.py` | `User` model (16 lines) — FK target for `uploaded_by` and `created_by` fields |
-| `boot/settings.py` | Settings: `DEFAULT_AUTO_FIELD` (L144), `FILE_UPLOAD_*` settings (L139-141), `AUTH_USER_MODEL` (L77), Celery serializer (L129) |
-| `conftest.py` | Shared `user` fixture (16 lines) — reused by new model tests |
-| `aikb/models.md` | Current model documentation — must be rewritten for 5 models |
-| `aikb/admin.md` | Current admin documentation — must be rewritten for 5 admin classes |
-| `aikb/services.md` | Current service documentation — must be updated (services deleted) |
-| `aikb/tasks.md` | Current task documentation — must be updated (task deleted) |
-| `aikb/conventions.md` | Coding patterns: `TextChoices`, `db_table`, `__str__`, service layer, task patterns |
-| `aikb/architecture.md` | App structure tree — must be updated |
+| File | Why |
+|------|-----|
+| `common/models.py` | `TimeStampedModel` definition (lines 6-13) — base class for all 4 models |
+| `common/fields.py` | `MoneyField` — reference for custom field patterns (not used in this PEP, but shows `deconstruct()` pattern) |
+| `common/utils.py` | `generate_reference()`, `safe_dispatch()` — utility patterns; UUID v7 wrapper will be added here |
+| `uploads/models.py` | Current `IngestFile` model (58 lines) — will be replaced entirely |
+| `uploads/admin.py` | Current `IngestFileAdmin` (32 lines) — will be replaced entirely |
+| `uploads/services/uploads.py` | Current services: `validate_file`, `create_ingest_file`, `consume_ingest_file` — will be replaced |
+| `uploads/tasks.py` | Current `cleanup_expired_ingest_files_task` (67 lines) — will be updated for new model |
+| `uploads/tests/test_services.py` | Current service tests (144 lines) — will be replaced |
+| `uploads/tests/test_tasks.py` | Current task tests (103 lines) — will be replaced |
+| `uploads/apps.py` | `UploadsConfig` with `default_auto_field = "django.db.models.BigAutoField"` — UUID PKs need explicit field on each model |
+| `boot/settings.py` | `DEFAULT_AUTO_FIELD` (line 144), upload settings (lines 139-141), Celery JSON serializer (line 129), `AUTH_USER_MODEL` (line 77) |
+| `conftest.py` | Shared `user` fixture — no changes needed, but tests will use it |
+| `requirements.in` | `uuid_utils>=0.9` already present (line 24) — no dependency change needed |
+| `aikb/conventions.md` | Code patterns: TextChoices, db_table, service layer, import order, naming |
+| `aikb/models.md` | Model documentation — must be updated after implementation |
+| `aikb/services.md` | Service layer docs — must be updated after implementation |
+| `aikb/tasks.md` | Task docs — must be updated after implementation |
+| `aikb/admin.md` | Admin docs — must be updated after implementation |
+
+---
 
 ## Prerequisites
 
-- [ ] **PEP 0002 is fully implemented** — All code renames (model, admin, services, tasks, tests, aikb) are complete. The PEP 0002 database migration is NOT required (it's moot since PEP 0003 drops the table).
-  - Verify: `grep -rn "FileUpload\|FileUploadAdmin\|create_upload\|consume_upload\|cleanup_expired_uploads" --include="*.py" uploads/ | grep -v migrations/` (expect 0 results)
-- [ ] **Clean working tree in `uploads/`** — No uncommitted changes
-  - Verify: `git status uploads/`
-- [ ] **Database is migrated** — Current migrations are applied
-  - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python manage.py showmigrations uploads`
-- [ ] **All existing tests pass** before any changes
-  - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev pytest uploads/tests/ -v`
+- [ ] **PEP 0002 is finalized** — Verify `uploads/models.py` contains `class IngestFile` (not `FileUpload`)
+  ```bash
+  grep -c "class IngestFile" uploads/models.py  # Expected: 1
+  ```
+
+- [ ] **`uuid_utils` is installed** — Already in `requirements.in` (line 24: `uuid_utils>=0.9`)
+  ```bash
+  source ~/.virtualenvs/inventlily-d22a143/bin/activate && python -c "import uuid_utils; print(uuid_utils.__version__)"
+  # Expected: 0.14.1 or higher
+  ```
+
+- [ ] **Database is migrated to current state** — All existing migrations applied
+  ```bash
+  source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python manage.py showmigrations uploads
+  # Expected: [X] 0001_initial, [X] 0002_rename_fileupload_ingestfile
+  ```
+
+- [ ] **No uncommitted changes in uploads/** — Clean git state for the files we'll modify
+  ```bash
+  git diff --name-only uploads/
+  # Expected: empty (no unstaged changes)
+  ```
+
+---
 
 ## Implementation Steps
 
-### Step 1: Rewrite `uploads/models.py` with 5 models
+### Step 1: Add UUID v7 wrapper to common/utils.py
 
-- [ ] **Step 1**: Replace the single `IngestFile` model with 5 new models in `uploads/models.py`
-  - Files: `uploads/models.py` — complete rewrite (existing: 58 lines → new: ~230 lines)
-  - Details:
-    - **Imports**: Replace existing imports with:
-      ```python
-      import uuid
-      from common.models import TimeStampedModel
-      from django.conf import settings
-      from django.db import models
-      ```
-    - **Module docstring**: `"""Data models for file upload, chunked sessions, and event outbox."""`
-    - **Model 1: `UploadBatch(TimeStampedModel)`**
-      - `id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)`
-      - Inner `class Status(models.TextChoices)`: `INIT`, `IN_PROGRESS`, `COMPLETE`, `PARTIAL`, `FAILED`
-      - `created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="upload_batches")`
-      - `status = models.CharField(max_length=20, choices=Status.choices, default=Status.INIT)`
-      - `total_files = models.PositiveIntegerField(default=0)`
-      - `stored_files = models.PositiveIntegerField(default=0)`
-      - `failed_files = models.PositiveIntegerField(default=0)`
-      - `idempotency_key = models.CharField(max_length=255, unique=True, blank=True, null=True)`
-      - `Meta`: `db_table = "upload_batch"`, `verbose_name = "upload batch"`, `verbose_name_plural = "upload batches"`, `ordering = ["-created_at"]`
-      - `__str__`: `f"Batch {self.id} ({self.get_status_display()})"`
-    - **Model 2: `IngestFile(TimeStampedModel)`** — complete redesign
-      - `id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)`
-      - Inner `class Status(models.TextChoices)`: `UPLOADING`, `STORED`, `FAILED`, `DELETED`
-      - `batch = models.ForeignKey("UploadBatch", null=True, blank=True, on_delete=models.SET_NULL, related_name="files")`
-      - `uploaded_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="ingest_files")`
-      - `original_filename = models.CharField(max_length=255)`
-      - `content_type = models.CharField(max_length=100)`
-      - `size_bytes = models.PositiveBigIntegerField(help_text="File size in bytes")`
-      - `sha256 = models.CharField(max_length=64, blank=True, help_text="SHA-256 content hash")`
-      - `storage_backend = models.CharField(max_length=20, default="local")`
-      - `storage_bucket = models.CharField(max_length=255, blank=True)`
-      - `storage_key = models.CharField(max_length=500, blank=True)`
-      - `metadata = models.JSONField(default=dict, blank=True)`
-      - `status = models.CharField(max_length=20, choices=Status.choices, default=Status.UPLOADING)`
-      - `Meta`: `db_table = "ingest_file"`, `verbose_name = "ingest file"`, `verbose_name_plural = "ingest files"`, `ordering = ["-created_at"]`, indexes on `["uploaded_by", "-created_at"]`, `["status"]`, and `["sha256"]`
-      - `__str__`: `f"{self.original_filename} ({self.get_status_display()})"`
-    - **Model 3: `UploadSession(TimeStampedModel)`**
-      - `id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)`
-      - Inner `class Status(models.TextChoices)`: `INIT`, `IN_PROGRESS`, `COMPLETE`, `FAILED`, `ABORTED`
-      - `file = models.OneToOneField("IngestFile", on_delete=models.CASCADE, related_name="session")`
-      - `status = models.CharField(max_length=20, choices=Status.choices, default=Status.INIT)`
-      - `chunk_size_bytes = models.PositiveIntegerField(default=5_242_880, help_text="Target chunk size in bytes (default 5 MB)")`
-      - `total_size_bytes = models.PositiveBigIntegerField(help_text="Total file size contract")`
-      - `total_parts = models.PositiveIntegerField(help_text="Expected number of parts")`
-      - `bytes_received = models.PositiveBigIntegerField(default=0)`
-      - `completed_parts = models.PositiveIntegerField(default=0)`
-      - `idempotency_key = models.CharField(max_length=255, unique=True, blank=True, null=True)`
-      - `upload_token = models.CharField(max_length=255, unique=True, blank=True, null=True)`
-      - `Meta`: `db_table = "upload_session"`, `verbose_name = "upload session"`, `verbose_name_plural = "upload sessions"`, `ordering = ["-created_at"]`
-      - `__str__`: `f"Session {self.id} ({self.get_status_display()})"`
-    - **Model 4: `UploadPart(TimeStampedModel)`**
-      - `id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)`
-      - Inner `class Status(models.TextChoices)`: `PENDING`, `RECEIVED`, `FAILED`
-      - `session = models.ForeignKey("UploadSession", on_delete=models.CASCADE, related_name="parts")`
-      - `part_number = models.PositiveIntegerField()`
-      - `offset_bytes = models.PositiveBigIntegerField()`
-      - `size_bytes = models.PositiveBigIntegerField()`
-      - `sha256 = models.CharField(max_length=64, blank=True)`
-      - `status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)`
-      - `temp_storage_key = models.CharField(max_length=500, blank=True)`
-      - `Meta`: `db_table = "upload_part"`, `verbose_name = "upload part"`, `verbose_name_plural = "upload parts"`, `ordering = ["part_number"]`, `constraints = [UniqueConstraint(fields=["session", "part_number"], name="unique_session_part")]`
-      - `__str__`: `f"Part {self.part_number} of {self.session_id}"`
-    - **Model 5: `PortalEventOutbox(TimeStampedModel)`**
-      - `id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)`
-      - Inner `class Status(models.TextChoices)`: `PENDING`, `SENDING`, `DELIVERED`, `FAILED`
-      - `event_type = models.CharField(max_length=100)`
-      - `idempotency_key = models.CharField(max_length=255)`
-      - `file = models.ForeignKey("IngestFile", on_delete=models.CASCADE, related_name="outbox_events")`
-      - `payload = models.JSONField(default=dict)`
-      - `status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)`
-      - `attempts = models.PositiveIntegerField(default=0)`
-      - `next_attempt_at = models.DateTimeField(null=True, blank=True)`
-      - `delivered_at = models.DateTimeField(null=True, blank=True)`
-      - `Meta`: `db_table = "portal_event_outbox"`, `verbose_name = "portal event outbox"`, `verbose_name_plural = "portal event outbox entries"`, `ordering = ["-created_at"]`, `constraints = [UniqueConstraint(fields=["event_type", "idempotency_key"], name="unique_event_idempotency")]`
-      - `__str__`: `f"{self.event_type} ({self.get_status_display()})"`
-  - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -c "from uploads.models import UploadBatch, IngestFile, UploadSession, UploadPart, PortalEventOutbox; print('All 5 models imported OK')"` && `grep -c "class.*TimeStampedModel" uploads/models.py` (expect 5)
+**Files**: `common/utils.py` (modify — add function after existing code)
+
+**Details**: Add a `uuid7()` wrapper function that generates a UUID v7 value and returns it as a stdlib `uuid.UUID` instance. This is necessary because `uuid_utils.uuid7()` returns `uuid_utils.UUID` which is NOT an instance of `uuid.UUID` — Django's `UUIDField.get_prep_value()` calls `to_python()` which fails on `uuid_utils.UUID` objects with `AttributeError: 'uuid_utils.UUID' object has no attribute 'replace'`.
+
+```python
+# Add to common/utils.py after existing imports
+import uuid
+import uuid_utils as _uuid_utils
+
+def uuid7():
+    """Generate a UUID v7 (time-ordered, RFC 9562) as a stdlib uuid.UUID.
+
+    Uses ``uuid_utils.uuid7()`` internally but converts to ``uuid.UUID``
+    for compatibility with Django's ``UUIDField``.
+    """
+    return uuid.UUID(bytes=_uuid_utils.uuid7().bytes)
+```
+
+**Verify**:
+```bash
+source ~/.virtualenvs/inventlily-d22a143/bin/activate && python -c "
+from common.utils import uuid7
+import uuid
+u = uuid7()
+assert isinstance(u, uuid.UUID), f'Expected uuid.UUID, got {type(u)}'
+assert u.version == 7, f'Expected version 7, got {u.version}'
+print('uuid7() OK:', u)
+"
+```
+
+---
 
 ### Step 2: Delete existing migrations
 
-- [ ] **Step 2**: Delete all existing migration files and regenerate from scratch
-  - Files: `uploads/migrations/0001_initial.py` — delete
-  - Details:
-    - Delete `uploads/migrations/0001_initial.py`. There is no production data, so a clean slate is safe.
-    - If PEP 0002 created `uploads/migrations/0002_*.py`, delete that too.
-    - Keep `uploads/migrations/__init__.py`.
-  - Verify: `ls uploads/migrations/*.py` (expect only `__init__.py`)
+**Files**: `uploads/migrations/0001_initial.py` (delete), `uploads/migrations/0002_rename_fileupload_ingestfile.py` (delete)
 
-### Step 3: Generate and apply fresh migration
+**Details**: Since there is no production data (confirmed in summary.md "Out of Scope"), delete all existing migrations. A fresh `0001_initial.py` will be generated after writing the new models. Keep `uploads/migrations/__init__.py`.
 
-- [ ] **Step 3**: Run `makemigrations` to generate a clean initial migration for all 5 models, then apply it
-  - Files: `uploads/migrations/0001_initial.py` — new file (auto-generated)
-  - Details:
-    - Run `makemigrations uploads` — Django should generate a single `0001_initial.py` with `CreateModel` operations for all 5 models.
-    - Inspect the generated migration to confirm:
-      - All 5 `CreateModel` operations are present (`UploadBatch`, `IngestFile`, `UploadSession`, `UploadPart`, `PortalEventOutbox`)
-      - UUID primary key fields are `UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)`
-      - FK dependencies are in the correct order (UploadBatch before IngestFile, IngestFile before UploadSession and PortalEventOutbox, UploadSession before UploadPart)
-      - `UniqueConstraint` entries are present for `UploadPart` and `PortalEventOutbox`
-      - `JSONField(default=dict)` is used (not `default={}`)
-    - Drop the old `ingest_file` table before migrating (since we deleted the old migration): `python manage.py dbshell -- -c "DROP TABLE IF EXISTS ingest_file CASCADE;"`
-    - Run `migrate uploads` to apply.
-  - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python manage.py showmigrations uploads` (expect `[X] 0001_initial`) && `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python manage.py dbshell -- -c "SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename IN ('upload_batch','ingest_file','upload_session','upload_part','portal_event_outbox') ORDER BY tablename;"` (expect all 5 tables)
+**Verify**:
+```bash
+ls uploads/migrations/*.py
+# Expected: only __init__.py
+```
 
-### Step 4: Rewrite admin classes
+---
 
-- [ ] **Step 4**: Replace the single `IngestFileAdmin` with 5 admin classes in `uploads/admin.py`
-  - Files: `uploads/admin.py` — complete rewrite (existing: 32 lines → new: ~100 lines)
-  - Details:
-    - **Module docstring**: `"""Admin configuration for upload models."""`
-    - **Imports**: `from uploads.models import IngestFile, PortalEventOutbox, UploadBatch, UploadPart, UploadSession`
-    - **`UploadBatchAdmin`**:
-      - `list_display = ("id", "created_by", "status", "total_files", "stored_files", "failed_files", "created_at")`
-      - `list_filter = ("status", "created_at")`
-      - `search_fields = ("id", "created_by__email", "created_by__username", "idempotency_key")`
-      - `readonly_fields = ("id", "total_files", "stored_files", "failed_files", "created_at", "updated_at")`
-      - `list_select_related = ("created_by",)`
-      - `date_hierarchy = "created_at"`
-    - **`IngestFileAdmin`** (redesigned):
-      - `list_display = ("original_filename", "uploaded_by", "content_type", "size_bytes", "status", "storage_backend", "created_at")`
-      - `list_filter = ("status", "storage_backend", "content_type", "created_at")`
-      - `search_fields = ("original_filename", "uploaded_by__email", "uploaded_by__username", "sha256", "storage_key")`
-      - `readonly_fields = ("id", "sha256", "size_bytes", "content_type", "storage_backend", "storage_bucket", "storage_key", "metadata", "created_at", "updated_at")`
-      - `list_select_related = ("uploaded_by", "batch")`
-      - `date_hierarchy = "created_at"`
-    - **`UploadSessionAdmin`**:
-      - `list_display = ("id", "file", "status", "completed_parts", "total_parts", "bytes_received", "total_size_bytes", "created_at")`
-      - `list_filter = ("status", "created_at")`
-      - `search_fields = ("id", "idempotency_key", "upload_token")`
-      - `readonly_fields = ("id", "bytes_received", "completed_parts", "created_at", "updated_at")`
-      - `list_select_related = ("file",)`
-      - `date_hierarchy = "created_at"`
-    - **`UploadPartAdmin`**:
-      - `list_display = ("id", "session", "part_number", "size_bytes", "status", "created_at")`
-      - `list_filter = ("status",)`
-      - `search_fields = ("id", "session__id")`
-      - `readonly_fields = ("id", "created_at", "updated_at")`
-      - `list_select_related = ("session",)`
-    - **`PortalEventOutboxAdmin`**:
-      - `list_display = ("id", "event_type", "file", "status", "attempts", "next_attempt_at", "delivered_at", "created_at")`
-      - `list_filter = ("status", "event_type", "created_at")`
-      - `search_fields = ("id", "event_type", "idempotency_key")`
-      - `readonly_fields = ("id", "payload", "attempts", "delivered_at", "created_at", "updated_at")`
-      - `list_select_related = ("file",)`
-      - `date_hierarchy = "created_at"`
-  - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -c "from django.contrib import admin; from uploads.models import UploadBatch, IngestFile, UploadSession, UploadPart, PortalEventOutbox; print('UploadBatch:', admin.site.is_registered(UploadBatch)); print('IngestFile:', admin.site.is_registered(IngestFile)); print('UploadSession:', admin.site.is_registered(UploadSession)); print('UploadPart:', admin.site.is_registered(UploadPart)); print('PortalEventOutbox:', admin.site.is_registered(PortalEventOutbox))"` (expect all `True`)
+### Step 3: Write the 4 models in uploads/models.py
 
-### Step 5: Delete existing services
+**Files**: `uploads/models.py` (rewrite — replace entire file)
 
-- [ ] **Step 5**: Remove the existing service functions that depend on `FileField` and the old status lifecycle
-  - Files:
-    - `uploads/services/uploads.py` — delete file
-    - `uploads/services/__init__.py` — keep (empty module, preserves directory structure for future services)
-  - Details:
-    - Delete `uploads/services/uploads.py` entirely. The three functions (`validate_file`, `create_ingest_file`, `consume_ingest_file`) are tightly coupled to `FileField`, `SimpleUploadedFile`, and the old `pending/ready/consumed/failed` status lifecycle. They cannot be adapted to the new model shape.
-    - Keep `uploads/services/__init__.py` to preserve the `services/` package structure for future PEPs that will rebuild the service layer for the new models.
-  - Verify: `ls uploads/services/` (expect only `__init__.py`) && `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -c "import uploads.services; print('services package OK')"` (should import without error)
+**Details**: Replace the current `IngestFile` model (58 lines) with 4 new models. Each model:
+- Inherits from `TimeStampedModel` (from `common/models.py:6-13`)
+- Has explicit `id = models.UUIDField(primary_key=True, default=uuid7, editable=False)` — overrides `DEFAULT_AUTO_FIELD` in `boot/settings.py:144` and `uploads/apps.py:9`
+- Uses `default=uuid7` where `uuid7` is the wrapper from `common/utils.py` (Step 1)
+- Has `db_table`, `verbose_name`, `verbose_name_plural`, `ordering`, `__str__` per conventions in `aikb/conventions.md`
+- Uses `TextChoices` for status fields (per `aikb/conventions.md` "Status fields" section)
+- References `settings.AUTH_USER_MODEL` for user FKs (value: `"accounts.User"` per `boot/settings.py:77`)
 
-### Step 6: Delete existing task
+**Model definitions:**
 
-- [ ] **Step 6**: Remove the `cleanup_expired_ingest_files_task` that depends on `FileField`
-  - Files: `uploads/tasks.py` — delete file
-  - Details:
-    - Delete `uploads/tasks.py` entirely. The `cleanup_expired_ingest_files_task` calls `upload.file.delete(save=False)` which requires Django's `FileField` — this method doesn't exist on the redesigned model with abstract storage pointers.
-    - The task concept (TTL-based cleanup) remains valid, but the implementation must be rebuilt once the storage backend service layer is defined in a future PEP.
-    - The `FILE_UPLOAD_TTL_HOURS` setting in `boot/settings.py` is **not deleted** — it will be used by the future cleanup task.
-  - Verify: `test ! -f uploads/tasks.py && echo "tasks.py deleted"` && `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python manage.py check` (should pass — Celery autodiscovery gracefully handles missing `tasks.py`)
+#### UploadBatch
+```python
+class UploadBatch(TimeStampedModel):
+    class Status(models.TextChoices):
+        INIT = "init", "Init"
+        IN_PROGRESS = "in_progress", "In Progress"
+        COMPLETE = "complete", "Complete"
+        PARTIAL = "partial", "Partial"
+        FAILED = "failed", "Failed"
 
-### Step 7: Delete existing tests and write model tests
+    id = models.UUIDField(primary_key=True, default=uuid7, editable=False)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="upload_batches",
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.INIT,
+    )
+    idempotency_key = models.CharField(
+        max_length=255, blank=True, db_index=True,
+    )
 
-- [ ] **Step 7a**: Delete existing tests that depend on `FileField` and old services
-  - Files:
-    - `uploads/tests/test_services.py` — delete file
-    - `uploads/tests/test_tasks.py` — delete file
-  - Details:
-    - All 10 service tests and 5 task tests depend on `SimpleUploadedFile`, `FileField`, old status values (`READY`, `CONSUMED`), and deleted service/task functions. They cannot be adapted.
-  - Verify: `ls uploads/tests/` (expect only `__init__.py` and `test_models.py` after Step 7b)
+    class Meta:
+        db_table = "upload_batch"
+        verbose_name = "upload batch"
+        verbose_name_plural = "upload batches"
+        ordering = ["-created_at"]
 
-- [ ] **Step 7b**: Write model tests in `uploads/tests/test_models.py`
-  - Files: `uploads/tests/test_models.py` — new file (~180 lines)
-  - Details:
-    - **Module docstring**: `"""Unit tests for upload data models."""`
-    - **Imports**: `uuid`, `pytest`, `from django.db import IntegrityError`, `from uploads.models import UploadBatch, IngestFile, UploadSession, UploadPart, PortalEventOutbox`
-    - **Test class `TestUploadBatch`** (`@pytest.mark.django_db`):
-      - `test_create_batch` — create batch with `created_by=user`, verify UUID PK, default `status=INIT`, default counters are 0
-      - `test_batch_user_set_null` — create batch, delete user, verify `batch.created_by is None` (SET_NULL)
-      - `test_idempotency_key_unique` — create two batches with same `idempotency_key`, expect `IntegrityError`
-    - **Test class `TestIngestFile`** (`@pytest.mark.django_db`):
-      - `test_create_file` — create file with required fields, verify UUID PK, default `status=UPLOADING`, `metadata={}`, `storage_backend="local"`
-      - `test_file_user_set_null` — create file, delete user, verify `file.uploaded_by is None` (SET_NULL)
-      - `test_file_batch_set_null` — create file with batch, delete batch, verify `file.batch is None` (SET_NULL)
-      - `test_sha256_index_lookup` — create file with `sha256` value, verify query by `sha256` returns correct file
-      - `test_json_metadata` — create file with `metadata={"xml_root": "Invoice"}`, verify round-trip
-    - **Test class `TestUploadSession`** (`@pytest.mark.django_db`):
-      - `test_create_session` — create session linked to file, verify default `status=INIT`, counters are 0
-      - `test_session_cascade_on_file_delete` — create session, delete file, verify session is deleted
-      - `test_one_to_one_constraint` — create two sessions for same file, expect `IntegrityError`
-    - **Test class `TestUploadPart`** (`@pytest.mark.django_db`):
-      - `test_create_part` — create part with all required fields, verify default `status=PENDING`
-      - `test_unique_session_part_number` — create two parts with same `(session, part_number)`, expect `IntegrityError`
-      - `test_parts_cascade_on_session_delete` — create parts, delete session, verify parts are deleted
-    - **Test class `TestPortalEventOutbox`** (`@pytest.mark.django_db`):
-      - `test_create_event` — create event with required fields, verify defaults
-      - `test_unique_event_idempotency` — create two events with same `(event_type, idempotency_key)`, expect `IntegrityError`
-      - `test_event_cascade_on_file_delete` — create event, delete file, verify event is deleted
-    - Use the existing `user` fixture from `conftest.py` for FK tests.
-    - Helper function or fixture `make_ingest_file(uploaded_by=None, **kwargs)` for creating `IngestFile` instances with minimal required fields.
-  - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev pytest uploads/tests/test_models.py -v`
+    def __str__(self):
+        return f"Batch {self.pk} ({self.get_status_display()})"
+```
 
-### Step 8: Add chunk size setting
+#### UploadFile
+```python
+class UploadFile(TimeStampedModel):
+    class Status(models.TextChoices):
+        UPLOADING = "uploading", "Uploading"
+        STORED = "stored", "Stored"
+        PROCESSED = "processed", "Processed"
+        FAILED = "failed", "Failed"
+        DELETED = "deleted", "Deleted"
 
-- [ ] **Step 8**: Add `FILE_UPLOAD_CHUNK_SIZE` setting to `boot/settings.py`
-  - Files: `boot/settings.py` — modify existing file (add 1 line after L141)
-  - Details:
-    - Add `FILE_UPLOAD_CHUNK_SIZE = 5_242_880  # 5 MB default chunk size` after `FILE_UPLOAD_ALLOWED_TYPES` on L141, within the `Base` class.
-    - This provides a central configuration point for the default chunk size used by `UploadSession.chunk_size_bytes`. The model field's `default=5_242_880` matches this setting.
-  - Verify: `grep -n "FILE_UPLOAD_CHUNK_SIZE" boot/settings.py` (expect 1 result)
+    id = models.UUIDField(primary_key=True, default=uuid7, editable=False)
+    batch = models.ForeignKey(
+        "UploadBatch",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="files",
+    )
+    uploaded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="upload_files",
+    )
+    file = models.FileField(upload_to="uploads/%Y/%m/")
+    original_filename = models.CharField(max_length=255)
+    content_type = models.CharField(max_length=100)
+    size_bytes = models.PositiveBigIntegerField(help_text="File size in bytes")
+    sha256 = models.CharField(max_length=64, blank=True, db_index=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.UPLOADING,
+    )
+    error_message = models.TextField(blank=True)
 
-### Step 9: Run system checks and lint
+    class Meta:
+        db_table = "upload_file"
+        verbose_name = "upload file"
+        verbose_name_plural = "upload files"
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["uploaded_by", "-created_at"]),
+            models.Index(fields=["status"]),
+        ]
 
-- [ ] **Step 9**: Verify the full system passes Django checks and linting
-  - Files: none (validation only)
-  - Details:
-    - Run `python manage.py check` — verify no errors or warnings
-    - Run `ruff check .` — verify no lint errors (import ordering, unused imports after deletions)
-    - Run `ruff format --check .` — verify formatting
-  - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python manage.py check && ruff check . && ruff format --check .`
+    def __str__(self):
+        return f"{self.original_filename} ({self.get_status_display()})"
+```
 
-### Step 10: Update `aikb/models.md`
+#### UploadSession
+```python
+class UploadSession(TimeStampedModel):
+    class Status(models.TextChoices):
+        INIT = "init", "Init"
+        IN_PROGRESS = "in_progress", "In Progress"
+        COMPLETE = "complete", "Complete"
+        FAILED = "failed", "Failed"
+        ABORTED = "aborted", "Aborted"
 
-- [ ] **Step 10**: Rewrite the Uploads App section of `aikb/models.md` to document all 5 models
-  - Files: `aikb/models.md` — modify existing file
-  - Details:
-    - **Replace the entire `## Uploads App` section** (L24-66) with documentation for all 5 models:
-      - `### UploadBatch (TimeStampedModel)` — fields, status choices, Meta, `__str__`
-      - `### IngestFile (TimeStampedModel)` — redesigned fields, new status choices (`uploading/stored/failed/deleted`), storage pointer fields, JSONField, indexes
-      - `### UploadSession (TimeStampedModel)` — fields, status choices, OneToOne to IngestFile
-      - `### UploadPart (TimeStampedModel)` — fields, status choices, UniqueConstraint
-      - `### PortalEventOutbox (TimeStampedModel)` — fields, status choices, `delivered_at`, UniqueConstraint
-    - **Replace the `## Entity Relationship Summary`** (L58-65) with the full ER diagram from the summary:
-      ```
-      User
-        ├── UploadBatch (via created_by FK, SET_NULL)
-        │     └── IngestFile (via batch FK, SET_NULL)
-        │           ├── UploadSession (1:1, CASCADE)
-        │           │     └── UploadPart (via session FK, CASCADE)
-        │           └── PortalEventOutbox (via file FK, CASCADE)
-        └── IngestFile (via uploaded_by FK, SET_NULL)
-      ```
-    - **Keep the closing note** about `TimeStampedModel` and `MoneyField` (L67) — this convention is still correct since all new models use `TimeStampedModel`.
-  - Verify: `grep -c "UploadBatch\|IngestFile\|UploadSession\|UploadPart\|PortalEventOutbox" aikb/models.md` (expect multiple results for each model)
+    id = models.UUIDField(primary_key=True, default=uuid7, editable=False)
+    file = models.OneToOneField(
+        "UploadFile",
+        on_delete=models.CASCADE,
+        related_name="session",
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.INIT,
+    )
+    chunk_size_bytes = models.PositiveIntegerField(
+        default=5_242_880,
+        help_text="Target chunk size in bytes (default 5 MB)",
+    )
+    total_size_bytes = models.PositiveBigIntegerField(
+        help_text="Total expected file size in bytes",
+    )
+    total_parts = models.PositiveIntegerField(
+        help_text="Total expected number of parts",
+    )
+    bytes_received = models.PositiveBigIntegerField(default=0)
+    completed_parts = models.PositiveIntegerField(default=0)
+    idempotency_key = models.CharField(
+        max_length=255, blank=True, db_index=True,
+    )
+    upload_token = models.CharField(
+        max_length=255, blank=True, db_index=True,
+    )
 
-### Step 11: Update `aikb/admin.md`
+    class Meta:
+        db_table = "upload_session"
+        verbose_name = "upload session"
+        verbose_name_plural = "upload sessions"
+        ordering = ["-created_at"]
 
-- [ ] **Step 11**: Rewrite the `uploads/admin.py` section to document all 5 admin classes
-  - Files: `aikb/admin.md` — modify existing file
-  - Details:
-    - **Replace the `### uploads/admin.py` section** (L23-36) with documentation for 5 admin classes: `UploadBatchAdmin`, `IngestFileAdmin`, `UploadSessionAdmin`, `UploadPartAdmin`, `PortalEventOutboxAdmin`.
-    - Document key admin options for each class: `list_display`, `list_filter`, `list_select_related`, `date_hierarchy`.
-    - **Update the `## Access` section** (L20) to note that 6 models are visible in admin (User + 5 upload models).
-  - Verify: `grep -c "UploadBatchAdmin\|IngestFileAdmin\|UploadSessionAdmin\|UploadPartAdmin\|PortalEventOutboxAdmin" aikb/admin.md` (expect 5)
+    def __str__(self):
+        return f"Session {self.pk} ({self.get_status_display()})"
+```
 
-### Step 12: Update `aikb/services.md`
+#### UploadPart
+```python
+class UploadPart(TimeStampedModel):
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending"
+        RECEIVED = "received", "Received"
+        FAILED = "failed", "Failed"
 
-- [ ] **Step 12**: Update the Uploads App section to reflect that services have been deleted
-  - Files: `aikb/services.md` — modify existing file
-  - Details:
-    - **Replace the `## Uploads App` section** (L36-58) with a note:
-      ```
-      ## Uploads App
+    id = models.UUIDField(primary_key=True, default=uuid7, editable=False)
+    session = models.ForeignKey(
+        "UploadSession",
+        on_delete=models.CASCADE,
+        related_name="parts",
+    )
+    part_number = models.PositiveIntegerField(help_text="1-indexed chunk ordinal")
+    offset_bytes = models.PositiveBigIntegerField(help_text="Byte offset of this part")
+    size_bytes = models.PositiveBigIntegerField(help_text="Size of this part in bytes")
+    sha256 = models.CharField(max_length=64, blank=True)
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.PENDING,
+    )
+    temp_storage_key = models.CharField(
+        max_length=500,
+        blank=True,
+        help_text="Temporary storage location for chunk before assembly",
+    )
 
-      The uploads app service layer was removed as part of PEP 0003 (Extend Data Models).
-      The previous services (`validate_file`, `create_ingest_file`, `consume_ingest_file`)
-      were tightly coupled to Django's `FileField` and the old status lifecycle. New services
-      for the redesigned models (abstract storage pointers, chunked uploads, event outbox)
-      will be defined in a future PEP.
+    class Meta:
+        db_table = "upload_part"
+        verbose_name = "upload part"
+        verbose_name_plural = "upload parts"
+        ordering = ["part_number"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["session", "part_number"],
+                name="unique_session_part_number",
+            ),
+        ]
 
-      The `uploads/services/` package directory is preserved for future use.
-      ```
-    - **Update the `## Current State` section** (L36-37) to note the package exists but is empty.
-  - Verify: `grep -c "validate_file\|create_ingest_file\|consume_ingest_file\|create_upload\|consume_upload" aikb/services.md` (expect 0 — old function names should not appear as current API)
+    def __str__(self):
+        return f"Part {self.part_number} of session {self.session_id}"
+```
 
-### Step 13: Update `aikb/tasks.md`
+**Import block at top of file:**
+```python
+"""Upload data models for batched, chunked file uploads."""
 
-- [ ] **Step 13**: Update the Uploads App section to reflect that the task has been deleted
-  - Files: `aikb/tasks.md` — modify existing file
-  - Details:
-    - **Replace the `## Uploads App` section** (L46-62) and the `## Current State` paragraph (L44-46) with a note:
-      ```
-      ## Current State
+from common.models import TimeStampedModel
+from common.utils import uuid7
+from django.conf import settings
+from django.db import models
+```
 
-      No tasks are currently defined. The previous `cleanup_expired_ingest_files_task` was
-      removed as part of PEP 0003 (Extend Data Models) because it depended on Django's
-      `FileField` which was replaced with abstract storage pointers. A new cleanup task
-      will be defined in a future PEP alongside the storage backend service layer.
+**Verify**:
+```bash
+source ~/.virtualenvs/inventlily-d22a143/bin/activate && python -c "
+from uploads.models import UploadBatch, UploadFile, UploadSession, UploadPart
+print('UploadBatch fields:', [f.name for f in UploadBatch._meta.get_fields()])
+print('UploadFile fields:', [f.name for f in UploadFile._meta.get_fields()])
+print('UploadSession fields:', [f.name for f in UploadSession._meta.get_fields()])
+print('UploadPart fields:', [f.name for f in UploadPart._meta.get_fields()])
+# Verify UUID v7 PK type
+import uuid
+batch = UploadBatch()
+assert isinstance(batch.pk, uuid.UUID), f'Expected uuid.UUID PK, got {type(batch.pk)}'
+assert batch.pk.version == 7, f'Expected version 7, got {batch.pk.version}'
+print('All 4 models imported and UUID v7 PKs verified.')
+"
+```
 
-      Celery autodiscovery (`boot/celery.py`) automatically discovers `tasks.py` in all
-      `INSTALLED_APPS`. When adding tasks to a new app, create `{app}/tasks.py` and follow
-      the conventions below.
-      ```
-    - Keep the `## Task Conventions` section (L64-101) and `## Running Celery` section (L103-112) unchanged — they document patterns for future tasks.
-  - Verify: `grep -c "cleanup_expired" aikb/tasks.md` (expect 0)
+---
 
-### Step 14: Update `aikb/architecture.md`
+### Step 4: Generate and apply fresh migration
 
-- [ ] **Step 14**: Update the app structure tree and background processing section
-  - Files: `aikb/architecture.md` — modify existing file
-  - Details:
-    - **Update the uploads section of the app tree** (L63-69):
-      ```
-      ├── uploads/        # File upload infrastructure
-      │   ├── models.py       # UploadBatch, IngestFile, UploadSession, UploadPart, PortalEventOutbox
-      │   ├── admin.py        # Admin classes for all 5 upload models
-      │   ├── services/       # (empty — service layer to be defined in future PEP)
-      │   ├── tests/          # test_models.py
-      │   └── migrations/     # 0001_initial.py
-      ```
-    - Note: `tasks.py` is removed from the tree since it no longer exists.
-    - **Update the Background Processing section** (L129-135):
-      ```
-      ## Background Processing
+**Files**: `uploads/migrations/0001_initial.py` (new file — auto-generated by `makemigrations`)
 
-      See [tasks.md](tasks.md) for details.
+**Details**: Run `makemigrations` to generate a single initial migration for all 4 models. Then apply it. Since old migrations were deleted in Step 2 and the old tables may still exist in the local DB, we need to `migrate uploads zero` first (to unapply the deleted migrations from Django's state), then apply the new one. If the tables don't exist (fresh DB), `migrate` will create them directly.
 
-      - **Celery** with PostgreSQL broker via SQLAlchemy transport (no Redis)
-      - **Tasks**: None currently defined. Upload cleanup task was removed in PEP 0003; will be rebuilt with storage backend services.
-      - **Dev mode**: `CELERY_TASK_ALWAYS_EAGER=True` (synchronous, no broker needed)
-      ```
-    - **Update the Storage section** (L117-127): Note that the `IngestFile` model now uses abstract storage pointers (`storage_backend`, `storage_bucket`, `storage_key`) instead of Django's `FileField`. The `media/uploads/` directory is no longer used by the model. Physical file storage is deferred to a future PEP.
-  - Verify: `grep "UploadBatch" aikb/architecture.md && grep -c "cleanup_expired" aikb/architecture.md` (expect UploadBatch found, 0 cleanup references)
+**Verify**:
+```bash
+# Generate migration
+source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python manage.py makemigrations uploads --check --dry-run 2>&1 | head -5
+# If the above says "No changes detected", the migration already exists. Otherwise:
+source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python manage.py makemigrations uploads
 
-### Step 15: Update `CLAUDE.md`
+# Apply migration (handle existing DB state)
+source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python manage.py migrate uploads zero --fake 2>/dev/null; source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python manage.py migrate uploads
 
-- [ ] **Step 15**: Update `CLAUDE.md` to reflect the new model landscape and removed task
-  - Files: `CLAUDE.md` — modify existing file
-  - Details:
-    - **Update the `### Django App Structure` table** (Uploads row): Change description from "File upload model, services, admin, cleanup task" to "Upload models (5), admin, services (empty — to be rebuilt)"
-    - **Update `### Celery (Background Tasks)` section** (L249): Remove the reference to `cleanup_expired_uploads_task`. Change to: "Tasks defined: None currently. The upload cleanup task was removed in PEP 0003; it will be rebuilt with the storage backend service layer."
-    - **Update `### File Upload Settings`** in the Architecture section: Add `FILE_UPLOAD_CHUNK_SIZE` to the settings table with description "Default chunk size in bytes (default: 5,242,880 = 5 MB)"
-  - Verify: `grep -c "cleanup_expired" CLAUDE.md` (expect 0) && `grep "FILE_UPLOAD_CHUNK_SIZE" CLAUDE.md` (expect 1 result)
+# Verify migration applied
+source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python manage.py showmigrations uploads
+# Expected: [X] 0001_initial
+
+# Verify all 4 tables exist
+source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python manage.py dbshell -- -c "\dt upload_*"
+# Expected: upload_batch, upload_file, upload_session, upload_part
+```
+
+---
+
+### Step 5: Write admin classes for all 4 models
+
+**Files**: `uploads/admin.py` (rewrite — replace entire file)
+
+**Details**: Replace the current `IngestFileAdmin` with admin classes for all 4 models. Follow patterns from `aikb/admin.md`: use `list_select_related` for FK optimization, `list_filter` for status fields, `readonly_fields` for auto-computed fields, `date_hierarchy` for time-based models.
+
+```python
+"""Admin configuration for upload models."""
+
+from django.contrib import admin
+
+from uploads.models import UploadBatch, UploadFile, UploadPart, UploadSession
+
+
+@admin.register(UploadBatch)
+class UploadBatchAdmin(admin.ModelAdmin):
+    """Admin interface for upload batches."""
+
+    list_display = ("pk", "created_by", "status", "created_at")
+    list_filter = ("status", "created_at")
+    search_fields = ("pk", "idempotency_key", "created_by__email")
+    readonly_fields = ("pk", "created_at", "updated_at")
+    list_select_related = ("created_by",)
+    date_hierarchy = "created_at"
+
+
+@admin.register(UploadFile)
+class UploadFileAdmin(admin.ModelAdmin):
+    """Admin interface for upload files."""
+
+    list_display = (
+        "original_filename",
+        "uploaded_by",
+        "content_type",
+        "size_bytes",
+        "status",
+        "created_at",
+    )
+    list_filter = ("status", "content_type", "created_at")
+    search_fields = ("original_filename", "sha256", "uploaded_by__email")
+    readonly_fields = (
+        "pk",
+        "size_bytes",
+        "content_type",
+        "sha256",
+        "status",
+        "error_message",
+        "created_at",
+        "updated_at",
+    )
+    list_select_related = ("uploaded_by", "batch")
+    date_hierarchy = "created_at"
+
+
+@admin.register(UploadSession)
+class UploadSessionAdmin(admin.ModelAdmin):
+    """Admin interface for upload sessions."""
+
+    list_display = (
+        "pk",
+        "file",
+        "status",
+        "completed_parts",
+        "total_parts",
+        "bytes_received",
+        "total_size_bytes",
+        "created_at",
+    )
+    list_filter = ("status", "created_at")
+    search_fields = ("pk", "idempotency_key", "upload_token")
+    readonly_fields = (
+        "pk",
+        "bytes_received",
+        "completed_parts",
+        "created_at",
+        "updated_at",
+    )
+    list_select_related = ("file",)
+    date_hierarchy = "created_at"
+
+
+@admin.register(UploadPart)
+class UploadPartAdmin(admin.ModelAdmin):
+    """Admin interface for upload parts."""
+
+    list_display = (
+        "pk",
+        "session",
+        "part_number",
+        "size_bytes",
+        "status",
+        "created_at",
+    )
+    list_filter = ("status",)
+    search_fields = ("pk", "session__pk")
+    readonly_fields = ("pk", "created_at", "updated_at")
+    list_select_related = ("session",)
+```
+
+**Verify**:
+```bash
+source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python manage.py check
+# Expected: System check identified no issues.
+
+# Verify admin registration
+source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -c "
+from django.contrib import admin
+from uploads.models import UploadBatch, UploadFile, UploadSession, UploadPart
+assert admin.site.is_registered(UploadBatch), 'UploadBatch not registered'
+assert admin.site.is_registered(UploadFile), 'UploadFile not registered'
+assert admin.site.is_registered(UploadSession), 'UploadSession not registered'
+assert admin.site.is_registered(UploadPart), 'UploadPart not registered'
+print('All 4 admin classes registered.')
+"
+```
+
+---
+
+### Step 6: Write services for UploadBatch and UploadFile
+
+**Files**: `uploads/services/uploads.py` (rewrite — replace entire file)
+
+**Details**: Replace the 3 existing functions (`validate_file`, `create_ingest_file`, `consume_ingest_file`) with new service functions. Follow service layer conventions from `aikb/services.md` and `aikb/conventions.md`: plain functions (not classes), business logic only, models imported at top level (not lazy — lazy imports are only for tasks/signals per convention).
+
+**Service functions:**
+
+```python
+"""Upload services for file validation, creation, and status transitions."""
+
+import hashlib
+import logging
+import mimetypes
+
+from django.conf import settings
+from django.core.exceptions import ValidationError
+from django.db import transaction
+
+from uploads.models import UploadBatch, UploadFile
+
+logger = logging.getLogger(__name__)
+
+
+def validate_file(file, max_size=None):
+    """Validate an uploaded file's size and MIME type.
+
+    Args:
+        file: A Django UploadedFile instance.
+        max_size: Maximum file size in bytes. Defaults to
+            ``settings.FILE_UPLOAD_MAX_SIZE`` (50 MB).
+
+    Returns:
+        A tuple of (content_type, size_bytes).
+
+    Raises:
+        ValidationError: If the file exceeds the size limit or has a
+            disallowed MIME type.
+    """
+    max_size = max_size or settings.FILE_UPLOAD_MAX_SIZE
+    size_bytes = file.size
+
+    if size_bytes > max_size:
+        raise ValidationError(
+            f"File size {size_bytes} bytes exceeds maximum "
+            f"of {max_size} bytes.",
+            code="file_too_large",
+        )
+
+    content_type, _ = mimetypes.guess_type(file.name)
+    if content_type is None:
+        content_type = "application/octet-stream"
+
+    allowed_types = settings.FILE_UPLOAD_ALLOWED_TYPES
+    if allowed_types is not None and content_type not in allowed_types:
+        raise ValidationError(
+            f"File type '{content_type}' is not allowed. "
+            f"Allowed types: {', '.join(allowed_types)}",
+            code="file_type_not_allowed",
+        )
+
+    return content_type, size_bytes
+
+
+def compute_sha256(file):
+    """Compute SHA-256 hash of a file.
+
+    Reads the file in 64 KB chunks. Seeks back to the start after hashing
+    so the file can be saved by Django's FileField afterward.
+
+    Args:
+        file: A Django UploadedFile instance.
+
+    Returns:
+        Hex-encoded SHA-256 hash string (64 characters).
+    """
+    hasher = hashlib.sha256()
+    file.seek(0)
+    for chunk in file.chunks(chunk_size=65_536):
+        hasher.update(chunk)
+    file.seek(0)
+    return hasher.hexdigest()
+
+
+def create_upload_file(user, file, batch=None):
+    """Validate, hash, and store an upload file.
+
+    Args:
+        user: The User instance who uploaded the file (or None).
+        file: A Django UploadedFile instance.
+        batch: Optional UploadBatch to associate with.
+
+    Returns:
+        An UploadFile instance with status STORED (success) or FAILED
+        (validation error).
+    """
+    try:
+        content_type, size_bytes = validate_file(file)
+    except ValidationError as exc:
+        upload = UploadFile.objects.create(
+            uploaded_by=user,
+            file=file,
+            original_filename=file.name,
+            content_type="unknown",
+            size_bytes=file.size,
+            batch=batch,
+            status=UploadFile.Status.FAILED,
+            error_message=str(exc.message),
+        )
+        logger.warning(
+            "Upload file failed validation: pk=%s user=%s error=%s",
+            upload.pk,
+            user.pk if user else None,
+            exc.message,
+        )
+        return upload
+
+    sha256 = compute_sha256(file)
+
+    upload = UploadFile.objects.create(
+        uploaded_by=user,
+        file=file,
+        original_filename=file.name,
+        content_type=content_type,
+        size_bytes=size_bytes,
+        sha256=sha256,
+        batch=batch,
+        status=UploadFile.Status.STORED,
+    )
+    logger.info(
+        "Upload file created: pk=%s user=%s file=%s size=%d sha256=%s",
+        upload.pk,
+        user.pk if user else None,
+        file.name,
+        size_bytes,
+        sha256[:16],
+    )
+    return upload
+
+
+def mark_file_processed(upload_file):
+    """Transition an upload file from STORED to PROCESSED.
+
+    Uses an atomic UPDATE with a WHERE clause on status to prevent
+    race conditions.
+
+    Args:
+        upload_file: An UploadFile instance.
+
+    Returns:
+        The updated UploadFile instance.
+
+    Raises:
+        ValueError: If the file is not in STORED status.
+    """
+    updated = UploadFile.objects.filter(
+        pk=upload_file.pk,
+        status=UploadFile.Status.STORED,
+    ).update(status=UploadFile.Status.PROCESSED)
+
+    if updated == 0:
+        raise ValueError(
+            f"Cannot mark upload file {upload_file.pk} as processed: "
+            f"status is '{upload_file.status}', expected 'stored'."
+        )
+
+    upload_file.refresh_from_db()
+    logger.info("Upload file processed: pk=%s", upload_file.pk)
+    return upload_file
+
+
+def mark_file_failed(upload_file, error=""):
+    """Transition an upload file to FAILED status.
+
+    Args:
+        upload_file: An UploadFile instance.
+        error: Error message describing the failure.
+
+    Returns:
+        The updated UploadFile instance.
+    """
+    upload_file.status = UploadFile.Status.FAILED
+    upload_file.error_message = error
+    upload_file.save(update_fields=["status", "error_message", "updated_at"])
+    logger.warning("Upload file failed: pk=%s error=%s", upload_file.pk, error)
+    return upload_file
+
+
+def mark_file_deleted(upload_file):
+    """Transition an upload file to DELETED status and remove the physical file.
+
+    Args:
+        upload_file: An UploadFile instance.
+
+    Returns:
+        The updated UploadFile instance.
+    """
+    try:
+        upload_file.file.delete(save=False)
+    except FileNotFoundError:
+        pass  # File already gone
+
+    upload_file.status = UploadFile.Status.DELETED
+    upload_file.save(update_fields=["status", "updated_at"])
+    logger.info("Upload file deleted: pk=%s", upload_file.pk)
+    return upload_file
+
+
+def create_batch(user, idempotency_key=""):
+    """Create a new upload batch.
+
+    Args:
+        user: The User instance creating the batch (or None).
+        idempotency_key: Optional client-provided key to prevent
+            duplicate batch creation.
+
+    Returns:
+        An UploadBatch instance.
+    """
+    batch = UploadBatch.objects.create(
+        created_by=user,
+        idempotency_key=idempotency_key,
+    )
+    logger.info("Upload batch created: pk=%s user=%s", batch.pk, user.pk if user else None)
+    return batch
+
+
+@transaction.atomic
+def finalize_batch(batch):
+    """Finalize a batch based on its files' statuses.
+
+    Transitions batch to:
+    - COMPLETE: all files are STORED or PROCESSED
+    - PARTIAL: some files are STORED/PROCESSED, some FAILED
+    - FAILED: all files are FAILED (or no files)
+
+    Args:
+        batch: An UploadBatch instance.
+
+    Returns:
+        The updated UploadBatch instance.
+    """
+    file_statuses = list(
+        batch.files.values_list("status", flat=True)
+    )
+
+    if not file_statuses:
+        batch.status = UploadBatch.Status.FAILED
+    else:
+        success_statuses = {UploadFile.Status.STORED, UploadFile.Status.PROCESSED}
+        successes = sum(1 for s in file_statuses if s in success_statuses)
+        failures = sum(1 for s in file_statuses if s == UploadFile.Status.FAILED)
+
+        if failures == 0:
+            batch.status = UploadBatch.Status.COMPLETE
+        elif successes == 0:
+            batch.status = UploadBatch.Status.FAILED
+        else:
+            batch.status = UploadBatch.Status.PARTIAL
+
+    batch.save(update_fields=["status", "updated_at"])
+    logger.info("Upload batch finalized: pk=%s status=%s", batch.pk, batch.status)
+    return batch
+```
+
+**Verify**:
+```bash
+source ~/.virtualenvs/inventlily-d22a143/bin/activate && python -c "
+from uploads.services.uploads import (
+    validate_file, compute_sha256, create_upload_file,
+    mark_file_processed, mark_file_failed, mark_file_deleted,
+    create_batch, finalize_batch,
+)
+print('All 8 service functions imported successfully.')
+"
+```
+
+---
+
+### Step 7: Write services for UploadSession and UploadPart
+
+**Files**: `uploads/services/sessions.py` (new file)
+
+**Details**: Create a new service module for session and part management. These services are separated from `uploads.py` because they represent a different domain concern (chunked upload lifecycle vs. file creation/status). This follows the convention in `aikb/services.md`: "One module per domain concern."
+
+```python
+"""Upload session services for chunked upload lifecycle management."""
+
+import logging
+import math
+
+from django.db import transaction
+
+from uploads.models import UploadFile, UploadPart, UploadSession
+
+logger = logging.getLogger(__name__)
+
+
+def create_upload_session(upload_file, total_size_bytes, chunk_size_bytes=None):
+    """Create an upload session for chunked file upload.
+
+    Args:
+        upload_file: An UploadFile instance to associate the session with.
+        total_size_bytes: Total expected file size in bytes.
+        chunk_size_bytes: Target chunk size in bytes. Defaults to 5 MB.
+
+    Returns:
+        An UploadSession instance.
+    """
+    if chunk_size_bytes is None:
+        chunk_size_bytes = 5_242_880  # 5 MB
+
+    total_parts = math.ceil(total_size_bytes / chunk_size_bytes)
+
+    session = UploadSession.objects.create(
+        file=upload_file,
+        total_size_bytes=total_size_bytes,
+        chunk_size_bytes=chunk_size_bytes,
+        total_parts=total_parts,
+    )
+    logger.info(
+        "Upload session created: pk=%s file=%s parts=%d",
+        session.pk,
+        upload_file.pk,
+        total_parts,
+    )
+    return session
+
+
+def record_upload_part(session, part_number, offset_bytes, size_bytes, sha256=""):
+    """Record a received chunk within an upload session.
+
+    Args:
+        session: An UploadSession instance.
+        part_number: 1-indexed chunk ordinal.
+        offset_bytes: Byte offset of this part in the file.
+        size_bytes: Size of this part in bytes.
+        sha256: Optional SHA-256 hash of the chunk.
+
+    Returns:
+        An UploadPart instance with status RECEIVED.
+    """
+    part = UploadPart.objects.create(
+        session=session,
+        part_number=part_number,
+        offset_bytes=offset_bytes,
+        size_bytes=size_bytes,
+        sha256=sha256,
+        status=UploadPart.Status.RECEIVED,
+    )
+
+    # Update session progress counters
+    UploadSession.objects.filter(pk=session.pk).update(
+        completed_parts=models.F("completed_parts") + 1,
+        bytes_received=models.F("bytes_received") + size_bytes,
+        status=UploadSession.Status.IN_PROGRESS,
+    )
+
+    logger.info(
+        "Upload part recorded: session=%s part=%d size=%d",
+        session.pk,
+        part_number,
+        size_bytes,
+    )
+    return part
+
+
+@transaction.atomic
+def complete_upload_session(session):
+    """Complete an upload session after all parts are received.
+
+    Validates that all expected parts have been received, then
+    transitions the session to COMPLETE.
+
+    Args:
+        session: An UploadSession instance.
+
+    Returns:
+        The updated UploadSession instance.
+
+    Raises:
+        ValueError: If not all parts have been received.
+    """
+    session.refresh_from_db()
+    received_count = session.parts.filter(
+        status=UploadPart.Status.RECEIVED,
+    ).count()
+
+    if received_count < session.total_parts:
+        raise ValueError(
+            f"Cannot complete session {session.pk}: "
+            f"received {received_count} of {session.total_parts} parts."
+        )
+
+    session.status = UploadSession.Status.COMPLETE
+    session.save(update_fields=["status", "updated_at"])
+
+    # Transition the associated file to STORED
+    UploadFile.objects.filter(
+        pk=session.file_id,
+        status=UploadFile.Status.UPLOADING,
+    ).update(status=UploadFile.Status.STORED)
+
+    logger.info("Upload session completed: pk=%s", session.pk)
+    return session
+```
+
+**Note**: The `record_upload_part` function uses `models.F()` for atomic counter updates. The import `from django.db import models` is needed — add it to the import block or use `from django.db.models import F` directly.
+
+**Corrected import block:**
+```python
+import logging
+import math
+
+from django.db import models, transaction
+
+from uploads.models import UploadFile, UploadPart, UploadSession
+```
+
+**Verify**:
+```bash
+source ~/.virtualenvs/inventlily-d22a143/bin/activate && python -c "
+from uploads.services.sessions import (
+    create_upload_session,
+    record_upload_part,
+    complete_upload_session,
+)
+print('All 3 session service functions imported successfully.')
+"
+```
+
+---
+
+### Step 8: Update the cleanup task
+
+**Files**: `uploads/tasks.py` (rewrite — replace entire file)
+
+**Details**: Replace the existing `cleanup_expired_ingest_files_task` with `cleanup_expired_upload_files_task`. Key changes:
+- Model: `IngestFile` → `UploadFile` (lazy import per task conventions in `aikb/tasks.md`)
+- Task name: `uploads.tasks.cleanup_expired_upload_files_task`
+- The cleanup logic pattern is preserved: batch deletion of expired records with physical file removal via `upload.file.delete()` (FileField retained per Q5)
+- The cleanup task filters by `created_at__lt=cutoff` (same as current) — status is not relevant for TTL-based cleanup
+
+```python
+"""Celery tasks for the uploads app."""
+
+import logging
+from datetime import timedelta
+
+from django.utils import timezone
+
+from celery import shared_task
+
+logger = logging.getLogger(__name__)
+
+BATCH_SIZE = 1000
+
+
+@shared_task(
+    name="uploads.tasks.cleanup_expired_upload_files_task",
+    bind=True,
+    max_retries=2,
+    default_retry_delay=60,
+)
+def cleanup_expired_upload_files_task(self):
+    """Delete upload files older than FILE_UPLOAD_TTL_HOURS.
+
+    Processes at most BATCH_SIZE (1000) expired records per run to
+    stay within CELERY_TASK_TIME_LIMIT (300s). Logs the remaining
+    count for operational visibility.
+
+    Returns:
+        dict: {"deleted": int, "remaining": int}
+    """
+    from django.conf import settings
+
+    from uploads.models import UploadFile
+
+    ttl_hours = getattr(settings, "FILE_UPLOAD_TTL_HOURS", 24)
+    cutoff = timezone.now() - timedelta(hours=ttl_hours)
+    expired_qs = UploadFile.objects.filter(created_at__lt=cutoff)
+    total_expired = expired_qs.count()
+
+    if total_expired == 0:
+        logger.info("No expired upload files to clean up.")
+        return {"deleted": 0, "remaining": 0}
+
+    batch_pks = list(
+        expired_qs.order_by("pk").values_list("pk", flat=True)[:BATCH_SIZE]
+    )
+    batch = UploadFile.objects.filter(pk__in=batch_pks)
+
+    deleted_files = 0
+    for upload in batch.iterator():
+        try:
+            upload.file.delete(save=False)
+            deleted_files += 1
+        except FileNotFoundError:
+            deleted_files += 1  # File already gone, still count it
+
+    deleted_count, _ = batch.delete()
+    remaining = max(0, total_expired - deleted_count)
+
+    logger.info(
+        "Cleaned up %d expired upload files (%d files removed), "
+        "%d remaining.",
+        deleted_count,
+        deleted_files,
+        remaining,
+    )
+    return {"deleted": deleted_count, "remaining": remaining}
+```
+
+**Verify**:
+```bash
+source ~/.virtualenvs/inventlily-d22a143/bin/activate && python -c "
+from uploads.tasks import cleanup_expired_upload_files_task
+print('Task name:', cleanup_expired_upload_files_task.name)
+assert cleanup_expired_upload_files_task.name == 'uploads.tasks.cleanup_expired_upload_files_task'
+print('Task imported and name verified.')
+"
+```
+
+---
+
+### Step 9: Write tests for models and services
+
+**Files**: `uploads/tests/test_services.py` (rewrite — replace entire file), `uploads/tests/test_tasks.py` (rewrite — replace entire file), `uploads/tests/test_models.py` (new file)
+
+**Details**: Replace all existing tests. The `conftest.py` `user` fixture (at `conftest.py:6-15`) remains unchanged.
+
+#### uploads/tests/test_models.py (new file)
+
+Tests for model creation, UUID v7 PKs, status choices, cascade rules, and constraints:
+
+- **UUID v7 PK tests**: Verify `UploadBatch`, `UploadFile`, `UploadSession`, `UploadPart` all get UUID v7 PKs (version 7, `isinstance(pk, uuid.UUID)`)
+- **Cascade tests**: Delete user → verify `uploaded_by=None` on UploadFile (SET_NULL), delete file → verify session deleted (CASCADE), delete session → verify parts deleted (CASCADE), delete batch → verify file.batch=None (SET_NULL)
+- **UniqueConstraint test**: Two parts with same `(session, part_number)` → `IntegrityError`
+- **JSONField default test**: New UploadFile has `metadata == {}`
+- **Status choices test**: Verify each model's Status class has expected values
+
+#### uploads/tests/test_services.py (rewrite)
+
+Tests for all 8 service functions in `uploads/services/uploads.py`:
+
+- `validate_file`: 6 tests (valid file, oversized, unknown extension, disallowed type, allowed_types=None, custom max_size) — same coverage as existing tests
+- `compute_sha256`: 1 test (known input → known hash)
+- `create_upload_file`: 3 tests (valid → STORED with sha256, oversized → FAILED, with batch association)
+- `mark_file_processed`: 2 tests (STORED → PROCESSED, non-STORED raises ValueError)
+- `mark_file_failed`: 1 test (any status → FAILED with error message)
+- `mark_file_deleted`: 1 test (deletes physical file + sets DELETED status)
+- `create_batch`: 1 test (creates batch with INIT status)
+- `finalize_batch`: 3 tests (all stored → COMPLETE, mixed → PARTIAL, all failed → FAILED)
+
+#### uploads/tests/test_sessions.py (new file)
+
+Tests for 3 service functions in `uploads/services/sessions.py`:
+
+- `create_upload_session`: 2 tests (default chunk size, custom chunk size, verifies total_parts calculation)
+- `record_upload_part`: 2 tests (records part with RECEIVED status, updates session counters)
+- `complete_upload_session`: 2 tests (all parts received → COMPLETE + file STORED, missing parts raises ValueError)
+
+#### uploads/tests/test_tasks.py (rewrite)
+
+Tests for `cleanup_expired_upload_files_task`:
+
+- Same 5 test scenarios as existing (no expired, expired deleted, missing file, non-expired kept, batch limit)
+- Updated to use `UploadFile` model with new field names (`uploaded_by`, `content_type`, `size_bytes`)
+
+**Verify**:
+```bash
+source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -m pytest uploads/tests/ -v --tb=short 2>&1 | tail -30
+# Expected: all tests pass
+```
+
+---
+
+### Step 10: Run linter and formatter
+
+**Files**: All modified files
+
+**Details**: Run Ruff linter and formatter on all modified files. Fix any issues. The Ruff configuration is in `pyproject.toml:10-48`: target Python 3.12, 88-char line length, isort rules enforced.
+
+**Verify**:
+```bash
+source ~/.virtualenvs/inventlily-d22a143/bin/activate && ruff check uploads/ common/utils.py && ruff format --check uploads/ common/utils.py
+# Expected: no issues found
+```
+
+---
+
+### Step 11: Run Django system check
+
+**Files**: None (verification only)
+
+**Details**: Ensure Django is fully satisfied with the model definitions, admin registrations, and migrations.
+
+**Verify**:
+```bash
+source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python manage.py check --deploy 2>&1 | head -20
+# Expected: System check identified no issues (or only expected deployment warnings)
+
+# Also verify no pending migrations
+source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python manage.py makemigrations --check --dry-run
+# Expected: No changes detected
+```
+
+---
 
 ## Testing
 
-- [ ] **All new model tests pass** — 15+ tests covering model creation, FK cascades, unique constraints, and JSONField round-trips
-  - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev pytest uploads/tests/ -v`
-- [ ] **No broken imports in the uploads app** — all modules importable
-  - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -c "from uploads import models, admin; import uploads.services; print('All imports OK')"`
-- [ ] **Old service/task test files are deleted** — no test files reference deleted code
-  - Verify: `ls uploads/tests/` (expect `__init__.py` and `test_models.py` only)
+### Test Matrix
+
+| Category | Test File | Count | What's Tested |
+|----------|-----------|-------|---------------|
+| Models | `uploads/tests/test_models.py` | ~10 | UUID v7 PKs, cascades, constraints, JSONField, status choices |
+| Upload services | `uploads/tests/test_services.py` | ~18 | validate_file, compute_sha256, create_upload_file, mark_file_*, create_batch, finalize_batch |
+| Session services | `uploads/tests/test_sessions.py` | ~6 | create_upload_session, record_upload_part, complete_upload_session |
+| Tasks | `uploads/tests/test_tasks.py` | ~5 | cleanup_expired_upload_files_task (TTL, batching, missing files) |
+| **Total** | | **~39** | |
+
+### Running Tests
+
+```bash
+# Run all upload tests
+source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -m pytest uploads/tests/ -v
+
+# Run specific test file
+source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -m pytest uploads/tests/test_models.py -v
+
+# Run with coverage
+source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -m pytest uploads/tests/ -v --tb=short
+```
+
+### Key Test Scenarios
+
+1. **UUID v7 ordering**: Create 2 UploadFiles sequentially, verify `pk` values are time-ordered (`pk1 < pk2` when compared as strings)
+2. **Cascade SET_NULL**: Create user → create UploadFile → delete user → verify `upload_file.uploaded_by is None`
+3. **Cascade CASCADE**: Create UploadFile → create UploadSession → delete UploadFile → verify session is gone
+4. **UniqueConstraint**: Create 2 UploadParts with same `(session, part_number)` → `IntegrityError`
+5. **SHA-256 computation**: Upload file with known content → verify hash matches `hashlib.sha256(content).hexdigest()`
+6. **Batch finalization**: Create batch with 3 files (2 STORED, 1 FAILED) → finalize → verify PARTIAL status
+7. **Session completion**: Create session with 3 parts → record all 3 → complete → verify file transitions to STORED
+
+---
 
 ## Rollback Plan
 
-1. **Revert all code changes**: `git checkout -- uploads/ aikb/ CLAUDE.md boot/settings.py conftest.py`
-2. **Restore old migration**: The old `0001_initial.py` will be restored by git checkout.
-3. **Drop new tables and recreate old table**:
-   ```bash
-   source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python manage.py dbshell -- -c "
-     DROP TABLE IF EXISTS upload_part CASCADE;
-     DROP TABLE IF EXISTS portal_event_outbox CASCADE;
-     DROP TABLE IF EXISTS upload_session CASCADE;
-     DROP TABLE IF EXISTS ingest_file CASCADE;
-     DROP TABLE IF EXISTS upload_batch CASCADE;
-   "
-   ```
-4. **Re-apply old migration**: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python manage.py migrate uploads`
-5. **Verify rollback**: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python manage.py check && pytest uploads/tests/ -v`
+If the implementation needs to be reverted:
 
-No feature flags needed. No data migration needed (no production data). Rollback is straightforward because there are no downstream consumers of the new models yet.
+1. **Git revert**: All changes are in a single PEP, so `git revert <commit>` reverts cleanly
+2. **Database**: Since there's no production data, drop the new tables and recreate the old one:
+   ```bash
+   # Revert code
+   git revert <commit>
+   # Reset migrations
+   source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python manage.py migrate uploads zero
+   source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python manage.py migrate uploads
+   ```
+3. **Dependencies**: `uuid_utils` was already in `requirements.in` before this PEP — no dependency rollback needed
+4. **aikb files**: Revert to git HEAD versions
+
+---
 
 ## aikb Impact Map
 
-- [ ] `aikb/models.md` — Complete rewrite of §Uploads App: document all 5 models (UploadBatch, IngestFile, UploadSession, UploadPart, PortalEventOutbox) with fields, status choices, relationships, indexes, constraints. Rewrite §Entity Relationship Summary with full ER diagram.
-- [ ] `aikb/admin.md` — Rewrite §uploads/admin.py: document 5 admin classes with their `list_display`, `list_filter`, `list_select_related`, `date_hierarchy` options. Update §Access to note 6 registered models.
-- [ ] `aikb/services.md` — Update §Uploads App and §Current State: note services were removed in PEP 0003, package directory preserved for future PEP. Remove documentation of deleted functions.
-- [ ] `aikb/tasks.md` — Update §Current State and remove §Uploads App: note task was removed in PEP 0003 due to `FileField` removal. Keep §Task Conventions and §Running Celery sections unchanged.
-- [ ] `aikb/architecture.md` — Update app structure tree (L63-69): list 5 models, remove `tasks.py`, note empty services. Update §Background Processing (L129-135): remove task reference. Update §Storage (L117-127): note abstract storage pointers replace `FileField`.
-- [ ] `aikb/signals.md` — N/A (no signals added or removed in this PEP)
-- [ ] `aikb/cli.md` — N/A (no CLI changes in this PEP)
-- [ ] `aikb/conventions.md` — N/A (all new models follow existing conventions: `TimeStampedModel`, `TextChoices`, `db_table`, `__str__`)
-- [ ] `aikb/dependencies.md` — N/A (no new dependencies added)
-- [ ] `aikb/specs-roadmap.md` — N/A (roadmap references "File upload infrastructure" which is the app concept, not specific models)
-- [ ] `CLAUDE.md` — Update §Django App Structure table (uploads row), §Celery (Background Tasks) (remove task reference), §File Upload Settings (add `FILE_UPLOAD_CHUNK_SIZE`)
+| File | Impact | What to Update |
+|------|--------|----------------|
+| `aikb/models.md` | **Major rewrite** | Replace `IngestFile` section with 4 new models (`UploadBatch`, `UploadFile`, `UploadSession`, `UploadPart`). Document all fields, status choices, lifecycle diagrams, indexes, constraints, FK cascade rules. Update Entity Relationship Summary diagram. |
+| `aikb/services.md` | **Major rewrite** | Replace `uploads/services/uploads.py` section. Document 8 functions in `uploads.py` (`validate_file`, `compute_sha256`, `create_upload_file`, `mark_file_processed`, `mark_file_failed`, `mark_file_deleted`, `create_batch`, `finalize_batch`) and 3 functions in `sessions.py` (`create_upload_session`, `record_upload_part`, `complete_upload_session`). Add `sessions.py` section. |
+| `aikb/tasks.md` | **Update** | Rename `cleanup_expired_ingest_files_task` to `cleanup_expired_upload_files_task`. Update task name, model references, and description. |
+| `aikb/admin.md` | **Major update** | Replace `IngestFileAdmin` section with 4 admin classes (`UploadBatchAdmin`, `UploadFileAdmin`, `UploadSessionAdmin`, `UploadPartAdmin`). Document `list_display`, `list_filter`, `readonly_fields`, `list_select_related` for each. |
+| `aikb/architecture.md` | **Minor update** | Update `uploads/` section in Django App Structure tree to reflect new model names and new service modules. Update Background Processing section to reference `cleanup_expired_upload_files_task`. |
+| `aikb/conventions.md` | **Minor update** | Add note about UUID v7 PK convention with `common.utils.uuid7` wrapper. Mention `uuid_utils` compatibility issue and the wrapper pattern. |
+| `aikb/dependencies.md` | **No change** | `uuid_utils` is already documented in `requirements.in`. No new dependencies added. |
 
-## Detailed Todo List
-
-### Phase 1: Prerequisites & Setup
-
-- [ ] Verify PEP 0002 is fully implemented (all code renames: model, admin, services, tasks, tests, aikb)
-  - Run: `grep -rn "FileUpload\|FileUploadAdmin\|create_upload\|consume_upload\|cleanup_expired_uploads" --include="*.py" uploads/ | grep -v migrations/` → expect 0 results
-- [ ] Verify clean working tree in `uploads/`
-  - Run: `git status uploads/`
-- [ ] Verify database is migrated to current state
-  - Run: `python manage.py showmigrations uploads` → all checked
-- [ ] Run existing test suite to confirm green baseline
-  - Run: `pytest uploads/tests/ -v` → all pass
-
-### Phase 2: Rewrite Models (Step 1)
-
-- [ ] Replace `uploads/models.py` with 5 new model classes
-  - [ ] Add imports: `uuid`, `TimeStampedModel`, `settings`, `models`
-  - [ ] Add module docstring
-  - [ ] Write `UploadBatch(TimeStampedModel)` — UUID PK, Status choices (INIT/IN_PROGRESS/COMPLETE/PARTIAL/FAILED), `created_by` FK (SET_NULL), counters, `idempotency_key`, Meta, `__str__`
-  - [ ] Write `IngestFile(TimeStampedModel)` — UUID PK, Status choices (UPLOADING/STORED/FAILED/DELETED), `batch` FK (SET_NULL), `uploaded_by` FK (SET_NULL), file metadata fields, storage pointer fields, `metadata` JSONField, Meta with 3 indexes, `__str__`
-  - [ ] Write `UploadSession(TimeStampedModel)` — UUID PK, Status choices (INIT/IN_PROGRESS/COMPLETE/FAILED/ABORTED), OneToOne to IngestFile (CASCADE), chunking fields, progress counters, `idempotency_key`, `upload_token`, Meta, `__str__`
-  - [ ] Write `UploadPart(TimeStampedModel)` — UUID PK, Status choices (PENDING/RECEIVED/FAILED), FK to UploadSession (CASCADE), `part_number`, byte range fields, `sha256`, `temp_storage_key`, Meta with UniqueConstraint, `__str__`
-  - [ ] Write `PortalEventOutbox(TimeStampedModel)` — UUID PK, Status choices (PENDING/SENDING/DELIVERED/FAILED), `event_type`, `idempotency_key`, FK to IngestFile (CASCADE), `payload` JSONField, retry fields, `delivered_at`, Meta with UniqueConstraint, `__str__`
-- [ ] Verify all 5 models import correctly
-  - Run: `python -c "from uploads.models import UploadBatch, IngestFile, UploadSession, UploadPart, PortalEventOutbox; print('OK')"` → OK
-- [ ] Verify all 5 classes inherit from TimeStampedModel
-  - Run: `grep -c "class.*TimeStampedModel" uploads/models.py` → 5
-
-### Phase 3: Migration Reset (Steps 2–3)
-
-- [ ] Delete `uploads/migrations/0001_initial.py` (and any `0002_*.py` from PEP 0002)
-- [ ] Verify only `__init__.py` remains in `uploads/migrations/`
-  - Run: `ls uploads/migrations/*.py` → only `__init__.py`
-- [ ] Run `makemigrations uploads` to generate fresh `0001_initial.py`
-- [ ] Inspect generated migration for correctness:
-  - [ ] All 5 `CreateModel` operations present
-  - [ ] UUID PKs use `default=uuid.uuid4, editable=False`
-  - [ ] FK dependency ordering is correct (UploadBatch → IngestFile → UploadSession/PortalEventOutbox → UploadPart)
-  - [ ] UniqueConstraints present for UploadPart and PortalEventOutbox
-  - [ ] JSONField uses `default=dict` (not `default={}`)
-- [ ] Drop old `ingest_file` table: `python manage.py dbshell -- -c "DROP TABLE IF EXISTS ingest_file CASCADE;"`
-- [ ] Apply migration: `python manage.py migrate uploads`
-- [ ] Verify all 5 tables exist in database
-  - Run: `python manage.py dbshell -- -c "SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename IN ('upload_batch','ingest_file','upload_session','upload_part','portal_event_outbox') ORDER BY tablename;"` → 5 rows
-
-### Phase 4: Rewrite Admin (Step 4)
-
-- [ ] Replace `uploads/admin.py` with 5 admin classes
-  - [ ] Write `UploadBatchAdmin` — list_display, list_filter, search_fields, readonly_fields, list_select_related, date_hierarchy
-  - [ ] Write `IngestFileAdmin` (redesigned) — list_display, list_filter, search_fields, readonly_fields, list_select_related, date_hierarchy
-  - [ ] Write `UploadSessionAdmin` — list_display, list_filter, search_fields, readonly_fields, list_select_related, date_hierarchy
-  - [ ] Write `UploadPartAdmin` — list_display, list_filter, search_fields, readonly_fields, list_select_related
-  - [ ] Write `PortalEventOutboxAdmin` — list_display, list_filter, search_fields, readonly_fields, list_select_related, date_hierarchy
-- [ ] Verify all 5 admin classes are registered
-  - Run: `python -c "from django.contrib import admin; from uploads.models import *; assert all(admin.site.is_registered(m) for m in [UploadBatch, IngestFile, UploadSession, UploadPart, PortalEventOutbox]); print('OK')"` → OK
-
-### Phase 5: Remove Old Code (Steps 5–6)
-
-- [ ] Delete `uploads/services/uploads.py`
-- [ ] Verify `uploads/services/__init__.py` still exists (preserves package)
-  - Run: `ls uploads/services/` → only `__init__.py`
-- [ ] Verify services package imports cleanly
-  - Run: `python -c "import uploads.services; print('OK')"` → OK
-- [ ] Delete `uploads/tasks.py`
-- [ ] Verify `uploads/tasks.py` no longer exists
-  - Run: `test ! -f uploads/tasks.py && echo "deleted"` → deleted
-- [ ] Verify `python manage.py check` passes (Celery autodiscovery handles missing tasks.py gracefully)
-
-### Phase 6: Tests (Step 7)
-
-- [ ] Delete `uploads/tests/test_services.py`
-- [ ] Delete `uploads/tests/test_tasks.py`
-- [ ] Verify only `__init__.py` remains in `uploads/tests/` (before writing new tests)
-- [ ] Create `uploads/tests/test_models.py` with model tests:
-  - [ ] Write helper fixture `make_ingest_file` for creating IngestFile with minimal required fields
-  - [ ] Write `TestUploadBatch` — `test_create_batch`, `test_batch_user_set_null`, `test_idempotency_key_unique`
-  - [ ] Write `TestIngestFile` — `test_create_file`, `test_file_user_set_null`, `test_file_batch_set_null`, `test_sha256_index_lookup`, `test_json_metadata`
-  - [ ] Write `TestUploadSession` — `test_create_session`, `test_session_cascade_on_file_delete`, `test_one_to_one_constraint`
-  - [ ] Write `TestUploadPart` — `test_create_part`, `test_unique_session_part_number`, `test_parts_cascade_on_session_delete`
-  - [ ] Write `TestPortalEventOutbox` — `test_create_event`, `test_unique_event_idempotency`, `test_event_cascade_on_file_delete`
-- [ ] Run model tests and verify all pass
-  - Run: `pytest uploads/tests/test_models.py -v` → 15+ tests pass
-
-### Phase 7: Settings (Step 8)
-
-- [ ] Add `FILE_UPLOAD_CHUNK_SIZE = 5_242_880` to `Base` class in `boot/settings.py` (after `FILE_UPLOAD_ALLOWED_TYPES`)
-- [ ] Verify setting exists
-  - Run: `grep -n "FILE_UPLOAD_CHUNK_SIZE" boot/settings.py` → 1 result
-
-### Phase 8: Quality Checks (Step 9)
-
-- [ ] Run `python manage.py check` — no errors or warnings
-- [ ] Run `ruff check .` — no lint errors
-- [ ] Run `ruff format --check .` — formatting clean
-
-### Phase 9: Documentation Updates (Steps 10–15)
-
-- [ ] **aikb/models.md** (Step 10): Rewrite §Uploads App with all 5 models, rewrite §Entity Relationship Summary with full ER diagram
-  - Verify: `grep -c "UploadBatch\|UploadSession\|UploadPart\|PortalEventOutbox" aikb/models.md` → multiple hits
-- [ ] **aikb/admin.md** (Step 11): Rewrite §uploads/admin.py with 5 admin classes, update §Access to note 6 registered models
-  - Verify: `grep -c "UploadBatchAdmin\|UploadSessionAdmin\|UploadPartAdmin\|PortalEventOutboxAdmin" aikb/admin.md` → 4
-- [ ] **aikb/services.md** (Step 12): Replace §Uploads App with note that services were removed in PEP 0003
-  - Verify: `grep -c "validate_file\|create_ingest_file\|consume_ingest_file" aikb/services.md` → 0
-- [ ] **aikb/tasks.md** (Step 13): Replace §Current State and §Uploads App with note that task was removed in PEP 0003, keep §Task Conventions and §Running Celery
-  - Verify: `grep -c "cleanup_expired" aikb/tasks.md` → 0
-- [ ] **aikb/architecture.md** (Step 14): Update app structure tree (list 5 models, remove tasks.py, note empty services), update §Background Processing, update §Storage for abstract storage pointers
-  - Verify: `grep "UploadBatch" aikb/architecture.md` → found; `grep -c "cleanup_expired" aikb/architecture.md` → 0
-- [ ] **CLAUDE.md** (Step 15): Update §Django App Structure (uploads row), §Celery (remove task reference), §File Upload Settings (add `FILE_UPLOAD_CHUNK_SIZE`)
-  - Verify: `grep -c "cleanup_expired" CLAUDE.md` → 0; `grep "FILE_UPLOAD_CHUNK_SIZE" CLAUDE.md` → found
-
-### Phase 10: No Stale References
-
-- [ ] Verify no old-name references remain in source code
-  - Run: `grep -rn "FileUpload\|FileField\|file_upload\|create_upload\|consume_upload\|cleanup_expired" --include="*.py" uploads/ | grep -v migrations/ | grep -v "# PEP\|# TODO"` → 0 results
-- [ ] Verify no stale references in documentation
-  - Run: `grep -rn "FileUpload\|FileUploadAdmin\|create_upload\|consume_upload\|cleanup_expired_uploads\|cleanup_expired_ingest_files" aikb/ CLAUDE.md` → 0 results
+---
 
 ## Final Verification
 
-### Acceptance Criteria
+### Acceptance Criteria Checks
 
-- [ ] **5 new models exist in `uploads/models.py`** — `UploadBatch`, `IngestFile` (redesigned), `UploadSession`, `UploadPart`, `PortalEventOutbox`
-  - Verify: `grep -c "class.*TimeStampedModel" uploads/models.py` (expect 5)
-
-- [ ] **All models use UUID primary keys**
-  - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -c "from uploads.models import UploadBatch, IngestFile, UploadSession, UploadPart, PortalEventOutbox; [print(m.__name__, m._meta.pk.get_internal_type()) for m in [UploadBatch, IngestFile, UploadSession, UploadPart, PortalEventOutbox]]"` (expect all `UUIDField`)
-
-- [ ] **IngestFile uses abstract storage pointers instead of FileField** — fields `storage_backend`, `storage_bucket`, `storage_key` exist; no `FileField` on any model
-  - Verify: `grep -c "FileField" uploads/models.py` (expect 0) && `grep "storage_backend\|storage_bucket\|storage_key" uploads/models.py` (expect 3 lines)
-
-- [ ] **IngestFile status choices are `uploading/stored/failed/deleted`**
-  - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -c "from uploads.models import IngestFile; print([c[0] for c in IngestFile.Status.choices])"` (expect `['uploading', 'stored', 'failed', 'deleted']`)
-
-- [ ] **User FKs use `SET_NULL` with `null=True`** — files and batches survive user deletion
-  - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -c "from uploads.models import IngestFile, UploadBatch; print('IngestFile.uploaded_by on_delete:', IngestFile._meta.get_field('uploaded_by').remote_field.on_delete.__name__); print('UploadBatch.created_by on_delete:', UploadBatch._meta.get_field('created_by').remote_field.on_delete.__name__)"` (expect both `SET_NULL`)
-
-- [ ] **UniqueConstraint on UploadPart `(session, part_number)`**
-  - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -c "from uploads.models import UploadPart; print([c.name for c in UploadPart._meta.constraints])"` (expect `['unique_session_part']`)
-
-- [ ] **UniqueConstraint on PortalEventOutbox `(event_type, idempotency_key)`**
-  - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -c "from uploads.models import PortalEventOutbox; print([c.name for c in PortalEventOutbox._meta.constraints])"` (expect `['unique_event_idempotency']`)
-
-- [ ] **Migration applies cleanly** — single `0001_initial.py` creates all 5 tables
-  - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python manage.py showmigrations uploads` (expect `[X] 0001_initial`)
-
-- [ ] **`python manage.py check` passes**
-  - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python manage.py check`
-
-- [ ] **All admin classes are registered**
-  - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -c "from django.contrib import admin; from uploads.models import UploadBatch, IngestFile, UploadSession, UploadPart, PortalEventOutbox; assert all(admin.site.is_registered(m) for m in [UploadBatch, IngestFile, UploadSession, UploadPart, PortalEventOutbox]); print('All 5 admin classes registered')"` (expect success)
+| # | Criterion (from summary.md) | Verification Command |
+|---|---------------------------|---------------------|
+| 1 | 4 models created: UploadBatch, UploadFile, UploadSession, UploadPart | `source ~/.virtualenvs/inventlily-d22a143/bin/activate && python -c "from uploads.models import UploadBatch, UploadFile, UploadSession, UploadPart; print('All 4 models imported')"` |
+| 2 | All models use UUID v7 primary keys | `source ~/.virtualenvs/inventlily-d22a143/bin/activate && python -c "from uploads.models import UploadBatch, UploadFile, UploadSession, UploadPart; import uuid; models = [UploadBatch, UploadFile, UploadSession, UploadPart]; [print(f'{m.__name__}: UUID v7 PK, version={m().pk.version}') for m in models]"` |
+| 3 | All models inherit from TimeStampedModel | `source ~/.virtualenvs/inventlily-d22a143/bin/activate && python -c "from uploads.models import UploadBatch, UploadFile, UploadSession, UploadPart; from common.models import TimeStampedModel; assert all(issubclass(m, TimeStampedModel) for m in [UploadBatch, UploadFile, UploadSession, UploadPart]); print('All inherit TimeStampedModel')"` |
+| 4 | UploadFile has sha256, metadata, content_type fields | `source ~/.virtualenvs/inventlily-d22a143/bin/activate && python -c "from uploads.models import UploadFile; fields = {f.name for f in UploadFile._meta.get_fields()}; assert {'sha256', 'metadata', 'content_type'}.issubset(fields); print('Fields present:', sorted(fields))"` |
+| 5 | UploadPart has UniqueConstraint on (session, part_number) | `source ~/.virtualenvs/inventlily-d22a143/bin/activate && python -c "from uploads.models import UploadPart; constraints = UploadPart._meta.constraints; print('Constraints:', [(c.name, c.fields) for c in constraints]); assert any(c.fields == ('session', 'part_number') for c in constraints)"` |
+| 6 | User FKs use SET_NULL | `source ~/.virtualenvs/inventlily-d22a143/bin/activate && python -c "from uploads.models import UploadBatch, UploadFile; from django.db.models import SET_NULL; assert UploadFile._meta.get_field('uploaded_by').remote_field.on_delete is SET_NULL; assert UploadBatch._meta.get_field('created_by').remote_field is not None; print('SET_NULL verified on user FKs')"` |
+| 7 | All services implemented and importable | `source ~/.virtualenvs/inventlily-d22a143/bin/activate && python -c "from uploads.services.uploads import validate_file, compute_sha256, create_upload_file, mark_file_processed, mark_file_failed, mark_file_deleted, create_batch, finalize_batch; from uploads.services.sessions import create_upload_session, record_upload_part, complete_upload_session; print('All 11 service functions imported')"` |
+| 8 | Cleanup task updated for new model | `source ~/.virtualenvs/inventlily-d22a143/bin/activate && python -c "from uploads.tasks import cleanup_expired_upload_files_task; print('Task:', cleanup_expired_upload_files_task.name)"` |
+| 9 | All admin classes registered | `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -c "from django.contrib import admin; from uploads.models import UploadBatch, UploadFile, UploadSession, UploadPart; assert all(admin.site.is_registered(m) for m in [UploadBatch, UploadFile, UploadSession, UploadPart]); print('All 4 admin classes registered')"` |
 
 ### Integration Checks
 
-- [ ] **All 5 models importable from `uploads.models`**
-  - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -c "from uploads.models import UploadBatch, IngestFile, UploadSession, UploadPart, PortalEventOutbox; print('OK')"`
+```bash
+# Full test suite (all apps)
+source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -m pytest -v --tb=short
 
-- [ ] **FK cascade rules work correctly** — create a user, create a batch and file, delete user, verify SET_NULL
-  - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -c "
-import django; django.setup()
-from accounts.models import User
-from uploads.models import UploadBatch, IngestFile
-u = User.objects.create_user('cascade_test', 'ct@test.com', 'pass123')
-b = UploadBatch.objects.create(created_by=u)
-f = IngestFile.objects.create(uploaded_by=u, batch=b, original_filename='test.txt', content_type='text/plain', size_bytes=100)
-u.delete()
-b.refresh_from_db(); f.refresh_from_db()
-assert b.created_by is None, 'batch.created_by should be None'
-assert f.uploaded_by is None, 'file.uploaded_by should be None'
-print('SET_NULL cascade OK')
-b.delete(); f.refresh_from_db()
-assert f.batch is None, 'file.batch should be None after batch deletion'
-print('Batch SET_NULL cascade OK')
-f.delete()
-print('All cascade rules verified')
-"`
+# Django system check
+source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python manage.py check
 
-- [ ] **UUID PKs work in Django admin** — admin pages render without errors
-  - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python manage.py check --deploy 2>&1 | grep -v "WARNINGS\|does not pass\|SECURE\|HSTS\|SESSION_COOKIE\|CSRF_COOKIE\|SSL" || true` (no model/admin errors)
+# No pending migrations
+source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python manage.py makemigrations --check --dry-run
 
-- [ ] **JSONField defaults work** — `default=dict` produces `{}` not `None`
-  - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -c "
-import django; django.setup()
-from uploads.models import IngestFile
-f = IngestFile(original_filename='test.txt', content_type='text/plain', size_bytes=0)
-assert f.metadata == {}, f'Expected empty dict, got {f.metadata}'
-print('JSONField default=dict OK')
-"`
+# Linter clean
+source ~/.virtualenvs/inventlily-d22a143/bin/activate && ruff check .
 
-- [ ] **UniqueConstraints produce database errors on violation**
-  - Verify: covered by model tests in Step 7b (`test_unique_session_part_number`, `test_unique_event_idempotency`)
-
-- [ ] **No stale old-name references remain in source**
-  - Verify: `grep -rn "FileUpload\|FileField\|file_upload\|create_upload\|consume_upload\|cleanup_expired" --include="*.py" uploads/ | grep -v migrations/ | grep -v "# PEP\|# TODO"` (expect 0 results)
+# Formatter clean
+source ~/.virtualenvs/inventlily-d22a143/bin/activate && ruff format --check .
+```
 
 ### Regression Checks
 
-- [ ] **`python manage.py check` passes**
-  - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python manage.py check`
+```bash
+# Verify existing conftest.py user fixture still works
+source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -m pytest conftest.py -v 2>&1 | head -5
 
-- [ ] **`ruff check .` passes**
-  - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && ruff check .`
+# Verify accounts app unaffected
+source ~/.virtualenvs/inventlily-d22a143/bin/activate && python -c "from accounts.models import User; print('User model OK')"
 
-- [ ] **`ruff format --check .` passes**
-  - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && ruff format --check .`
+# Verify frontend app unaffected
+source ~/.virtualenvs/inventlily-d22a143/bin/activate && python -c "from frontend.views.dashboard import dashboard; print('Dashboard view OK')"
 
-- [ ] **Full test suite passes** (not just uploads tests)
-  - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev pytest -v`
+# Verify Celery app starts (autodiscovery)
+source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -c "from boot.celery import app; print('Celery app OK, tasks:', list(app.tasks.keys())[:5])"
+```
 
-- [ ] **No broken documentation references** — all `aikb/` files are internally consistent
-  - Verify: `grep -rn "FileUpload\|FileUploadAdmin\|create_upload\|consume_upload\|cleanup_expired_uploads\|cleanup_expired_ingest_files" aikb/ CLAUDE.md` (expect 0 results)
+---
+
+## Completion Checklist
+
+- [ ] Step 1: UUID v7 wrapper added to `common/utils.py`
+- [ ] Step 2: Old migrations deleted
+- [ ] Step 3: 4 models written in `uploads/models.py`
+- [ ] Step 4: Fresh migration generated and applied
+- [ ] Step 5: Admin classes written for all 4 models
+- [ ] Step 6: Upload services written (`uploads/services/uploads.py`)
+- [ ] Step 7: Session services written (`uploads/services/sessions.py`)
+- [ ] Step 8: Cleanup task updated (`uploads/tasks.py`)
+- [ ] Step 9: Tests written (models, services, sessions, tasks)
+- [ ] Step 10: Linter and formatter pass
+- [ ] Step 11: Django system check passes
+- [ ] All acceptance criteria verified
+- [ ] Integration checks pass
+- [ ] Regression checks pass
+- [ ] aikb files updated (per Impact Map)
+- [ ] PEP status updated to Implemented

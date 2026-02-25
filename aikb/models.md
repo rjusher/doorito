@@ -23,11 +23,11 @@ Custom user model extending Django's AbstractUser. No additional fields beyond w
 
 ## Uploads App
 
-### FileUpload (TimeStampedModel)
-Temporary file upload with lifecycle tracking. Files are validated on upload, stored locally under `media/uploads/%Y/%m/`, and cleaned up after a configurable TTL. Defined in `uploads/models.py`. `db_table = "file_upload"`.
+### IngestFile (TimeStampedModel)
+Temporary ingest file with lifecycle tracking. Files are validated on upload, stored locally under `media/uploads/%Y/%m/`, and cleaned up after a configurable TTL. Defined in `uploads/models.py`. `db_table = "ingest_file"`.
 
 **Fields:**
-- `user` -- ForeignKey to `settings.AUTH_USER_MODEL` (CASCADE, `related_name="uploads"`)
+- `user` -- ForeignKey to `settings.AUTH_USER_MODEL` (CASCADE, `related_name="ingest_files"`)
 - `file` -- FileField (`upload_to="uploads/%Y/%m/"`)
 - `original_filename` -- CharField (max_length=255). Stored separately because Django may rename files on collision.
 - `file_size` -- PositiveBigIntegerField (file size in bytes)
@@ -37,8 +37,8 @@ Temporary file upload with lifecycle tracking. Files are validated on upload, st
 - `created_at` -- DateTimeField (auto_now_add, inherited from TimeStampedModel)
 - `updated_at` -- DateTimeField (auto_now, inherited from TimeStampedModel)
 
-**Status Choices (FileUpload.Status):**
-- `PENDING` ("pending") -- Reserved for future async validation (e.g., virus scanning). Currently, `create_upload` transitions directly to READY or FAILED.
+**Status Choices (IngestFile.Status):**
+- `PENDING` ("pending") -- Reserved for future async validation (e.g., virus scanning). Currently, `create_ingest_file` transitions directly to READY or FAILED.
 - `READY` ("ready") -- Validated and available for consumption.
 - `CONSUMED` ("consumed") -- A downstream process has retrieved and used the file.
 - `FAILED` ("failed") -- Upload validation failed.
@@ -60,7 +60,7 @@ Temporary file upload with lifecycle tracking. Files are validated on upload, st
 ```
 User (accounts.User, extends AbstractUser)
   ├── standard Django auth fields (username, email, password, etc.)
-  └── FileUpload (uploads.FileUpload, via user FK, CASCADE)
+  └── IngestFile (uploads.IngestFile, via user FK, CASCADE)
         └── file, original_filename, file_size, mime_type, status, error_message
 ```
 

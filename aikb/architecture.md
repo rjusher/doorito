@@ -61,10 +61,10 @@ doorito/
 │   ├── templates/      # frontend/ namespace (base, auth, dashboard, errors, components)
 │   └── urls.py         # /app/ URL prefix
 ├── uploads/        # File upload infrastructure
-│   ├── models.py       # FileUpload (temporary file with lifecycle tracking)
-│   ├── admin.py        # FileUploadAdmin
-│   ├── services/       # uploads.py (validate_file, create_upload, consume_upload)
-│   ├── tasks.py        # cleanup_expired_uploads_task
+│   ├── models.py       # IngestFile (temporary file with lifecycle tracking)
+│   ├── admin.py        # IngestFileAdmin
+│   ├── services/       # uploads.py (validate_file, create_ingest_file, consume_ingest_file)
+│   ├── tasks.py        # cleanup_expired_ingest_files_task
 │   ├── tests/          # test_services.py, test_tasks.py
 │   └── migrations/     # 0001_initial.py
 ├── templates/      # Project-level templates
@@ -131,5 +131,5 @@ Three lightweight tools complement Django's server-rendered architecture:
 See [tasks.md](tasks.md) for details.
 
 - **Celery** with PostgreSQL broker via SQLAlchemy transport (no Redis)
-- **Tasks**: `cleanup_expired_uploads_task` (uploads app) -- TTL-based cleanup of expired file uploads
+- **Tasks**: `cleanup_expired_ingest_files_task` (uploads app) -- TTL-based cleanup of expired ingest files
 - **Dev mode**: `CELERY_TASK_ALWAYS_EAGER=True` (synchronous, no broker needed)

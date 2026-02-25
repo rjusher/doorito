@@ -1,4 +1,4 @@
-"""Upload handling services for file validation, creation, and consumption."""
+"""Ingest file services for file validation, creation, and consumption."""
 
 import logging
 import mimetypes
@@ -6,7 +6,7 @@ import mimetypes
 from django.conf import settings
 from django.core.exceptions import ValidationError
 
-from uploads.models import FileUpload
+from uploads.models import IngestFile
 
 logger = logging.getLogger(__name__)
 
@@ -51,46 +51,46 @@ def validate_file(file, max_size=None):
     return mime_type, file_size
 
 
-def create_upload(user, file):
-    """Validate and store a file upload.
+def create_ingest_file(user, file):
+    """Validate and store an ingest file.
 
     Args:
-        user: The User instance who owns this upload.
+        user: The User instance who owns this ingest file.
         file: A Django UploadedFile instance.
 
     Returns:
-        A FileUpload instance with status READY (success) or FAILED
+        An IngestFile instance with status READY (success) or FAILED
         (validation error).
     """
     try:
         mime_type, file_size = validate_file(file)
     except ValidationError as exc:
-        upload = FileUpload.objects.create(
+        upload = IngestFile.objects.create(
             user=user,
             file=file,
             original_filename=file.name,
             file_size=file.size,
             mime_type="unknown",
-            status=FileUpload.Status.FAILED,
+            status=IngestFile.Status.FAILED,
             error_message=str(exc.message),
         )
         logger.warning(
-            "Upload failed validation for user %s: %s",
+            "Ingest file failed validation for user %s: %s",
             user.pk,
             exc.message,
         )
         return upload
 
-    upload = FileUpload.objects.create(
+    upload = IngestFile.objects.create(
         user=user,
         file=file,
         original_filename=file.name,
         file_size=file_size,
         mime_type=mime_type,
-        status=FileUpload.Status.READY,
+        status=IngestFile.Status.READY,
     )
     logger.info(
-        "Upload created: pk=%s user=%s file=%s size=%d",
+        "Ingest file created: pk=%s user=%s file=%s size=%d",
         upload.pk,
         user.pk,
         file.name,
@@ -99,34 +99,34 @@ def create_upload(user, file):
     return upload
 
 
-def consume_upload(file_upload):
-    """Mark an upload as consumed by a downstream process.
+def consume_ingest_file(ingest_file):
+    """Mark an ingest file as consumed by a downstream process.
 
     Uses an atomic UPDATE with a WHERE clause on status to prevent
     race conditions when multiple consumers attempt to consume the
-    same upload simultaneously.
+    same ingest file simultaneously.
 
     Args:
-        file_upload: A FileUpload instance to consume.
+        ingest_file: An IngestFile instance to consume.
 
     Returns:
-        The updated FileUpload instance.
+        The updated IngestFile instance.
 
     Raises:
-        ValueError: If the upload is not in READY status (already
+        ValueError: If the ingest file is not in READY status (already
             consumed, failed, or pending).
     """
-    updated = FileUpload.objects.filter(
-        pk=file_upload.pk,
-        status=FileUpload.Status.READY,
-    ).update(status=FileUpload.Status.CONSUMED)
+    updated = IngestFile.objects.filter(
+        pk=ingest_file.pk,
+        status=IngestFile.Status.READY,
+    ).update(status=IngestFile.Status.CONSUMED)
 
     if updated == 0:
         raise ValueError(
-            f"Cannot consume upload {file_upload.pk}: "
-            f"status is '{file_upload.status}', expected 'ready'."
+            f"Cannot consume ingest file {ingest_file.pk}: "
+            f"status is '{ingest_file.status}', expected 'ready'."
         )
 
-    file_upload.refresh_from_db()
-    logger.info("Upload consumed: pk=%s", file_upload.pk)
-    return file_upload
+    ingest_file.refresh_from_db()
+    logger.info("Ingest file consumed: pk=%s", ingest_file.pk)
+    return ingest_file

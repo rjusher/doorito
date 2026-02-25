@@ -1,12 +1,16 @@
-"""Unit tests for upload services."""
+"""Unit tests for ingest file services."""
 
 import pytest
 from django.core.exceptions import ValidationError
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import override_settings
 
-from uploads.models import FileUpload
-from uploads.services.uploads import consume_upload, create_upload, validate_file
+from uploads.models import IngestFile
+from uploads.services.uploads import (
+    consume_ingest_file,
+    create_ingest_file,
+    validate_file,
+)
 
 
 class TestValidateFile:
@@ -61,17 +65,17 @@ class TestValidateFile:
         assert exc_info.value.code == "file_too_large"
 
 
-class TestCreateUpload:
-    """Tests for create_upload service."""
+class TestCreateIngestFile:
+    """Tests for create_ingest_file service."""
 
     @pytest.mark.django_db
     def test_valid_upload_creates_ready_record(self, user, tmp_path, settings):
-        """Valid file creates FileUpload with status=READY."""
+        """Valid file creates IngestFile with status=READY."""
         settings.MEDIA_ROOT = tmp_path
         file = SimpleUploadedFile("document.pdf", b"pdf content here")
-        upload = create_upload(user, file)
+        upload = create_ingest_file(user, file)
 
-        assert upload.status == FileUpload.Status.READY
+        assert upload.status == IngestFile.Status.READY
         assert upload.original_filename == "document.pdf"
         assert upload.file_size == 16
         assert upload.mime_type == "application/pdf"
@@ -80,61 +84,61 @@ class TestCreateUpload:
 
     @pytest.mark.django_db
     def test_oversized_upload_creates_failed_record(self, user, tmp_path, settings):
-        """File exceeding max size creates FileUpload with status=FAILED."""
+        """File exceeding max size creates IngestFile with status=FAILED."""
         settings.MEDIA_ROOT = tmp_path
         settings.FILE_UPLOAD_MAX_SIZE = 10  # 10 bytes
         file = SimpleUploadedFile("big.pdf", b"x" * 100)
-        upload = create_upload(user, file)
+        upload = create_ingest_file(user, file)
 
-        assert upload.status == FileUpload.Status.FAILED
+        assert upload.status == IngestFile.Status.FAILED
         assert upload.mime_type == "unknown"
         assert "exceeds maximum" in upload.error_message
 
     @pytest.mark.django_db
     def test_upload_metadata_correct(self, user, tmp_path, settings):
-        """Returned FileUpload has correct original_filename, file_size, mime_type."""
+        """Returned IngestFile has correct original_filename, file_size, mime_type."""
         settings.MEDIA_ROOT = tmp_path
         file = SimpleUploadedFile("report.csv", b"a,b,c\n1,2,3")
-        upload = create_upload(user, file)
+        upload = create_ingest_file(user, file)
 
         assert upload.original_filename == "report.csv"
         assert upload.file_size == 11
         assert upload.mime_type == "text/csv"
 
 
-class TestConsumeUpload:
-    """Tests for consume_upload service."""
+class TestConsumeIngestFile:
+    """Tests for consume_ingest_file service."""
 
     @pytest.mark.django_db
     def test_ready_upload_transitions_to_consumed(self, user, tmp_path, settings):
-        """READY upload transitions to CONSUMED."""
+        """READY ingest file transitions to CONSUMED."""
         settings.MEDIA_ROOT = tmp_path
         file = SimpleUploadedFile("doc.pdf", b"content")
-        upload = create_upload(user, file)
-        assert upload.status == FileUpload.Status.READY
+        upload = create_ingest_file(user, file)
+        assert upload.status == IngestFile.Status.READY
 
-        result = consume_upload(upload)
-        assert result.status == FileUpload.Status.CONSUMED
+        result = consume_ingest_file(upload)
+        assert result.status == IngestFile.Status.CONSUMED
 
     @pytest.mark.django_db
     def test_already_consumed_raises_value_error(self, user, tmp_path, settings):
-        """Already CONSUMED upload raises ValueError."""
+        """Already CONSUMED ingest file raises ValueError."""
         settings.MEDIA_ROOT = tmp_path
         file = SimpleUploadedFile("doc.pdf", b"content")
-        upload = create_upload(user, file)
-        consume_upload(upload)
+        upload = create_ingest_file(user, file)
+        consume_ingest_file(upload)
 
         with pytest.raises(ValueError, match="expected 'ready'"):
-            consume_upload(upload)
+            consume_ingest_file(upload)
 
     @pytest.mark.django_db
     def test_failed_upload_raises_value_error(self, user, tmp_path, settings):
-        """FAILED upload raises ValueError."""
+        """FAILED ingest file raises ValueError."""
         settings.MEDIA_ROOT = tmp_path
         settings.FILE_UPLOAD_MAX_SIZE = 1  # Force failure
         file = SimpleUploadedFile("doc.pdf", b"content that is too large")
-        upload = create_upload(user, file)
-        assert upload.status == FileUpload.Status.FAILED
+        upload = create_ingest_file(user, file)
+        assert upload.status == IngestFile.Status.FAILED
 
         with pytest.raises(ValueError, match="expected 'ready'"):
-            consume_upload(upload)
+            consume_ingest_file(upload)

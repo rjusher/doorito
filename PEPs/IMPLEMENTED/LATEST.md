@@ -13,6 +13,11 @@ This file tracks all PEPs that have been fully implemented. Once a PEP is implem
 - **Summary**: Brief description of what was implemented and its impact.
 -->
 
+### PEP 0002: Rename FileUpload to IngestFile
+- **Implemented**: 2026-02-25
+- **Commit(s)**: `c0ab09a` (model, admin, migration), remaining changes uncommitted (to be included in finalization commit)
+- **Summary**: Renamed the `FileUpload` model to `IngestFile` across the entire `uploads` app to better reflect the model's role as an ingestion input rather than a simple upload artifact. Renamed the database table from `file_upload` to `ingest_file` via a Django migration (`RenameModel`, `AlterModelTable`, `RenameIndex`, `AlterField`). Renamed service functions `create_upload` → `create_ingest_file` and `consume_upload` → `consume_ingest_file`. Renamed admin class `FileUploadAdmin` → `IngestFileAdmin`. Renamed Celery task `cleanup_expired_uploads_task` → `cleanup_expired_ingest_files_task`. Updated all 17 tests to use new naming. Updated all `aikb/` documentation files and `CLAUDE.md` to reflect the new names. The `uploads` app directory, settings (`FILE_UPLOAD_*`), media storage path, and `validate_file` function were intentionally left unchanged (out of scope). Pure rename/refactor with no behavior changes.
+
 ### PEP 0001: File Upload Infrastructure
 - **Implemented**: 2026-02-25
 - **Commit(s)**: (uncommitted — to be included in finalization commit)

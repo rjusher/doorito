@@ -23,8 +23,8 @@ The only registered admin class. Uses Django's built-in `UserAdmin` with no cust
 ### uploads/admin.py
 
 ```python
-@admin.register(FileUpload)
-class FileUploadAdmin(admin.ModelAdmin):
+@admin.register(IngestFile)
+class IngestFileAdmin(admin.ModelAdmin):
     list_display = ("original_filename", "user", "file_size", "mime_type", "status", "created_at")
     list_filter = ("status", "mime_type", "created_at")
     search_fields = ("original_filename", "user__email", "user__username")

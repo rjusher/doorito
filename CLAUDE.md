@@ -23,11 +23,11 @@ The `aikb/` directory contains detailed contextual documentation for AI agents. 
 | File | Contents |
 |------|----------|
 | `aikb/architecture.md` | 3-app structure, request flow, template hierarchy |
-| `aikb/models.md` | User model, TimeStampedModel, MoneyField |
-| `aikb/services.md` | Service layer convention (empty — no services yet) |
-| `aikb/tasks.md` | Celery configuration, task conventions (no tasks yet) |
+| `aikb/models.md` | User model, IngestFile model, TimeStampedModel, MoneyField |
+| `aikb/services.md` | Service layer convention, uploads services |
+| `aikb/tasks.md` | Celery configuration, task conventions, cleanup task |
 | `aikb/signals.md` | Signal conventions (no signals yet) |
-| `aikb/admin.md` | UserAdmin registration |
+| `aikb/admin.md` | UserAdmin, IngestFileAdmin registration |
 | `aikb/cli.md` | `doorito` CLI commands (hello, check) |
 | `aikb/deployment.md` | Docker, environment variables, production configuration |
 | `aikb/conventions.md` | Code patterns, naming conventions, import order |
@@ -246,7 +246,7 @@ DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev celery -A boot wor
 honcho start -f Procfile.dev
 ```
 
-Tasks defined: `cleanup_expired_uploads_task` (uploads app) — see `aikb/tasks.md` for details and conventions.
+Tasks defined: `cleanup_expired_ingest_files_task` (uploads app) — see `aikb/tasks.md` for details and conventions.
 
 ### Docker
 
@@ -323,7 +323,7 @@ The project has 4 apps (see `aikb/architecture.md` for details):
 | `common` | Shared utilities: TimeStampedModel, MoneyField, dispatch helper |
 | `accounts` | Custom User model (email-based, extends AbstractUser) |
 | `frontend` | Web UI: auth (login/register/logout), dashboard — server-rendered views with HTMX + Alpine.js |
-| `uploads` | File upload model, services, admin, cleanup task |
+| `uploads` | IngestFile model, services, admin, cleanup task |
 
 Additional directories:
 - `boot/` — Django project configuration (settings, urls, wsgi, asgi, celery)

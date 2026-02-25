@@ -17,7 +17,6 @@ Given the following description of a proposed enhancement:
 
 3. **Read reference files** to understand project conventions:
    - `PEPs/PEP_0000_template/summary.md` — summary structure and sections
-   - `PEPs/PEP_0000_template/plan.md` — plan structure and sections
    - `PEPs/ABOUT.md` — PEP governance rules
    - `PEPs/INDEX.md` — active PEPs (for style reference and to add the new row)
    - `aikb/architecture.md` — project architecture
@@ -25,7 +24,7 @@ Given the following description of a proposed enhancement:
    - `aikb/services.md` — existing services
    - `aikb/conventions.md` — coding conventions
 
-4. **Read an existing well-written PEP for quality reference.** PEP 0009 (Store Billing) in git history is the gold standard. If other active PEPs exist in `PEPs/`, read their summary and plan for style reference.
+4. **Read an existing well-written PEP for quality reference.** PEP 0009 (Store Billing) in git history is the gold standard. If other active PEPs exist in `PEPs/`, read their summary for style reference.
 
 5. **Fill in the newly created `summary.md`** with all sections:
    - Problem Statement — clear, specific, motivated
@@ -37,15 +36,7 @@ Given the following description of a proposed enhancement:
    - Acceptance Criteria — specific, testable `- [ ]` checklist items
    - Status History — set to Proposed with today's date
 
-6. **Fill in the newly created `plan.md`** with all sections:
-   - Context Files — list of aikb/ and source files an implementer should read first
-   - Prerequisites — what must be in place before implementation
-   - Implementation Steps — ordered `- [ ]` steps, each with Files, Details, and Verify subsections; verification commands must be runnable shell commands
-   - Testing — manual and automated test plan
-   - Rollback Plan — how to safely undo
-   - aikb Impact Map — which `aikb/*.md` files need updating (with specific descriptions, not just "N/A")
-   - Final Verification — acceptance criteria mapping, integration checks, regression checks
-   - Completion — standard 3-item checklist
+6. **Leave `plan.md` as-is.** The template created by `pep-new.sh` already contains the correct structure. Do NOT fill in or modify `plan.md` — it will be completed later during the planning phase (`make claude-pep-plan`).
 
 7. **Add a row to `PEPs/INDEX.md`** in the table with: PEP number, title, status (Proposed), estimated effort, risk level, and dependencies.
 

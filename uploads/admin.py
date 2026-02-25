@@ -1,13 +1,13 @@
-"""Admin configuration for file uploads."""
+"""Admin configuration for ingest files."""
 
 from django.contrib import admin
 
-from uploads.models import FileUpload
+from uploads.models import IngestFile
 
 
-@admin.register(FileUpload)
-class FileUploadAdmin(admin.ModelAdmin):
-    """Admin interface for inspecting and managing file uploads."""
+@admin.register(IngestFile)
+class IngestFileAdmin(admin.ModelAdmin):
+    """Admin interface for inspecting and managing ingest files."""
 
     list_display = (
         "original_filename",

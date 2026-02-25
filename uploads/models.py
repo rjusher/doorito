@@ -1,12 +1,12 @@
-"""File upload model for temporary file storage."""
+"""Ingest file model for temporary file storage."""
 
 from common.models import TimeStampedModel
 from django.conf import settings
 from django.db import models
 
 
-class FileUpload(TimeStampedModel):
-    """Temporary file upload with lifecycle tracking.
+class IngestFile(TimeStampedModel):
+    """Temporary ingest file with lifecycle tracking.
 
     Files are validated on upload and stored locally. A downstream process
     consumes the file, after which it can be cleaned up. The cleanup task
@@ -17,7 +17,7 @@ class FileUpload(TimeStampedModel):
         pending → failed (validation error)
 
     The ``pending`` status is reserved for future async validation
-    (e.g., virus scanning). Currently, create_upload transitions
+    (e.g., virus scanning). Currently, create_ingest_file transitions
     directly to ``ready`` or ``failed``.
     """
 
@@ -30,7 +30,7 @@ class FileUpload(TimeStampedModel):
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
-        related_name="uploads",
+        related_name="ingest_files",
     )
     file = models.FileField(upload_to="uploads/%Y/%m/")
     original_filename = models.CharField(max_length=255)
@@ -44,9 +44,9 @@ class FileUpload(TimeStampedModel):
     error_message = models.TextField(blank=True)
 
     class Meta:
-        db_table = "file_upload"
-        verbose_name = "file upload"
-        verbose_name_plural = "file uploads"
+        db_table = "ingest_file"
+        verbose_name = "ingest file"
+        verbose_name_plural = "ingest files"
         ordering = ["-created_at"]
         indexes = [
             models.Index(fields=["user", "-created_at"]),

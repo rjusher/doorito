@@ -4,13 +4,13 @@ Quick reference of all PEPs currently in the workflow. Update this table when a 
 
 | PEP  | Title                          | Status   | Effort | Risk   | Depends On |
 |------|--------------------------------|----------|--------|--------|------------|
-| 0001 | AI Upload Portal               | Proposed | L      | Medium | —          |
+| —    | —                              | —        | —      | —      | —          |
 
 ## Dependency Graph
 
 ```mermaid
 graph TD
-    PEP0001["🟡 0001: AI Upload Portal"]
+    %% No active PEPs
 ```
 
 **Legend:** 🔴 High risk | 🟡 Medium risk | 🟢 Low risk

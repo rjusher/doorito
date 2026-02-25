@@ -43,11 +43,23 @@ Two queues are configured for future use:
 
 ## Current State
 
-No task modules exist yet. When adding the first task:
+The first task module exists in the `uploads` app. Celery autodiscovery (`boot/celery.py`) automatically discovers `tasks.py` in all `INSTALLED_APPS`. When adding tasks to a new app, create `{app}/tasks.py` and follow the conventions below.
 
-1. Create `{app}/tasks.py` or `{app}/tasks/{module}.py`
-2. Use the task pattern documented below
-3. Add autodiscovery via `app.autodiscover_tasks()` (already configured in `boot/celery.py`)
+---
+
+## Uploads App
+
+### uploads/tasks.py
+
+**`cleanup_expired_uploads_task`**
+- **Name**: `uploads.tasks.cleanup_expired_uploads_task`
+- **Purpose**: Deletes file uploads older than `FILE_UPLOAD_TTL_HOURS` (default 24 hours). Removes both physical files from disk and database records.
+- **Batch limit**: Processes at most 1000 expired records per run to stay within `CELERY_TASK_TIME_LIMIT` (300s).
+- **Settings read**: `FILE_UPLOAD_TTL_HOURS` (via `getattr` with 24-hour default)
+- **Queue**: `default` (Celery's default routing — appropriate for maintenance tasks)
+- **Return format**: `{"deleted": int, "remaining": int}`
+- **Retry**: `max_retries=2`, `default_retry_delay=60`
+- **Notes**: Uses lazy imports. Handles `FileNotFoundError` gracefully for already-deleted files. In Dev mode, runs synchronously via `CELERY_TASK_ALWAYS_EAGER=True`. Not scheduled — must be invoked manually or via celery-beat (to be configured in a future PEP).
 
 ## Task Conventions
 

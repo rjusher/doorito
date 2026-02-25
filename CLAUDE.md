@@ -246,7 +246,7 @@ DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev celery -A boot wor
 honcho start -f Procfile.dev
 ```
 
-No tasks are defined yet — see `aikb/tasks.md` for conventions when adding tasks.
+Tasks defined: `cleanup_expired_uploads_task` (uploads app) — see `aikb/tasks.md` for details and conventions.
 
 ### Docker
 
@@ -309,15 +309,21 @@ Uses **django-configurations** with class-based settings in `boot/settings.py`:
 
 Environment is selected via `DJANGO_CONFIGURATION` env var (Dev/Production).
 
+**File Upload Settings** (in `Base` class):
+- `FILE_UPLOAD_MAX_SIZE` — Maximum upload size in bytes (default: 52,428,800 = 50 MB)
+- `FILE_UPLOAD_TTL_HOURS` — Hours before expired uploads are cleaned up (default: 24)
+- `FILE_UPLOAD_ALLOWED_TYPES` — List of allowed MIME types, or `None` to accept all (default: `None`)
+
 ### Django App Structure
 
-The project has 3 apps (see `aikb/architecture.md` for details):
+The project has 4 apps (see `aikb/architecture.md` for details):
 
 | App | Responsibility |
 |-----|---------------|
 | `common` | Shared utilities: TimeStampedModel, MoneyField, dispatch helper |
 | `accounts` | Custom User model (email-based, extends AbstractUser) |
 | `frontend` | Web UI: auth (login/register/logout), dashboard — server-rendered views with HTMX + Alpine.js |
+| `uploads` | File upload model, services, admin, cleanup task |
 
 Additional directories:
 - `boot/` — Django project configuration (settings, urls, wsgi, asgi, celery)
@@ -341,7 +347,10 @@ The sidebar (`components/sidebar.html`) provides navigation with collapsible des
 
 ### Storage Configuration
 
-- **Both environments**: WhiteNoise with `CompressedManifestStaticFilesStorage` for static files
+- **Static files**: WhiteNoise with `CompressedManifestStaticFilesStorage` (both environments)
+- **Media files**: Local filesystem (`MEDIA_ROOT = BASE_DIR / "media"`, `MEDIA_URL = "media/"`)
+  - Upload files stored at `media/uploads/%Y/%m/` (date-based subdirectories)
+  - `media/` directory is gitignored
 
 ### Background Task Infrastructure
 

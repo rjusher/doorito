@@ -33,14 +33,16 @@ See `PEPs/ABOUT.md` for full PEP documentation and `CLAUDE.md` for the PEP lifec
 | CLI skeleton (doorito script) | Ready |
 | PEP workflow system | Ready |
 | aikb documentation system | Ready |
+| File upload infrastructure (uploads) | Ready |
 
 ## What's Not Built Yet
 
-Everything else. Some natural next steps (each should be a PEP):
+Some natural next steps (each should be a PEP):
 
-- Additional models (products, orders, etc.)
-- Service layer
-- Background tasks
+- Upload frontend views (forms, templates, URL routes for file upload UI)
+- Workflow management (workflow models, dispatch, AI task orchestration)
 - REST API
 - Multi-tenancy / RBAC
-- Production deployment (K8s, S3, etc.)
+- S3 / cloud storage for media files
+- Celery beat scheduling for periodic tasks (e.g., upload cleanup)
+- Production deployment (K8s, etc.)

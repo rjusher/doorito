@@ -36,6 +36,7 @@ class Base(Configuration):
         "common",
         "accounts",
         "frontend",
+        "uploads",
     ]
 
     MIDDLEWARE = [
@@ -133,6 +134,11 @@ class Base(Configuration):
     CELERY_TASK_SOFT_TIME_LIMIT = 240  # 4 min soft limit
     CELERY_RESULT_EXPIRES = 86400  # 24 hours
     CELERY_WORKER_HIJACK_ROOT_LOGGER = False
+
+    # File upload settings
+    FILE_UPLOAD_MAX_SIZE = 52_428_800  # 50 MB
+    FILE_UPLOAD_TTL_HOURS = 24
+    FILE_UPLOAD_ALLOWED_TYPES = None  # None = accept all; set to list e.g. ["application/pdf"]
 
     # Default field
     DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"

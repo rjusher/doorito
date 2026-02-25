@@ -60,6 +60,13 @@ doorito/
 │   ├── templatetags/   # frontend_tags.py
 │   ├── templates/      # frontend/ namespace (base, auth, dashboard, errors, components)
 │   └── urls.py         # /app/ URL prefix
+├── uploads/        # File upload infrastructure
+│   ├── models.py       # FileUpload (temporary file with lifecycle tracking)
+│   ├── admin.py        # FileUploadAdmin
+│   ├── services/       # uploads.py (validate_file, create_upload, consume_upload)
+│   ├── tasks.py        # cleanup_expired_uploads_task
+│   ├── tests/          # test_services.py, test_tasks.py
+│   └── migrations/     # 0001_initial.py
 ├── templates/      # Project-level templates
 │   └── base.html       # Root base template (loads Tailwind, HTMX, Alpine.js)
 ├── static/         # Static assets (CSS, JS)
@@ -79,7 +86,7 @@ HTTP Request
         → Template Response
 ```
 
-No multi-tenancy. No RBAC system. No service layer yet. No custom middleware beyond WhiteNoise and django-htmx.
+No multi-tenancy. No RBAC system. No custom middleware beyond WhiteNoise and django-htmx.
 
 ## URL Routing
 
@@ -112,10 +119,17 @@ Three lightweight tools complement Django's server-rendered architecture:
 - **Development**: Local filesystem for media, WhiteNoise for static
 - **Production**: WhiteNoise for static, local filesystem for media (no S3 configured yet)
 
+## Storage
+
+- **Static files**: WhiteNoise (dev and production)
+- **Media files**: Local filesystem (`MEDIA_ROOT = BASE_DIR / "media"`, `MEDIA_URL = "media/"`)
+  - Upload files stored at `media/uploads/%Y/%m/` (date-based subdirectories)
+  - `media/` is gitignored
+
 ## Background Processing
 
 See [tasks.md](tasks.md) for details.
 
 - **Celery** with PostgreSQL broker via SQLAlchemy transport (no Redis)
-- **No tasks defined yet** -- skeleton only
+- **Tasks**: `cleanup_expired_uploads_task` (uploads app) -- TTL-based cleanup of expired file uploads
 - **Dev mode**: `CELERY_TASK_ALWAYS_EAGER=True` (synchronous, no broker needed)

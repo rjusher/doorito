@@ -12,28 +12,62 @@ class UserAdmin(BaseUserAdmin):
     pass
 ```
 
-The only registered admin class. Uses Django's built-in `UserAdmin` with no customizations.
+The only accounts admin class. Uses Django's built-in `UserAdmin` with no customizations.
 
 ## Access
 
 - **URL**: `/admin/`
 - **Auth**: Django's built-in superuser/staff authentication
-- **Models visible**: User (via `accounts.UserAdmin`)
+- **Models visible**: User, UploadBatch, UploadFile, UploadSession, UploadPart
 
 ### uploads/admin.py
 
+Four admin classes registered for the upload models:
+
 ```python
-@admin.register(IngestFile)
-class IngestFileAdmin(admin.ModelAdmin):
-    list_display = ("original_filename", "user", "file_size", "mime_type", "status", "created_at")
-    list_filter = ("status", "mime_type", "created_at")
-    search_fields = ("original_filename", "user__email", "user__username")
-    readonly_fields = ("file_size", "mime_type", "status", "error_message", "created_at", "updated_at")
-    list_select_related = ("user",)
+@admin.register(UploadBatch)
+class UploadBatchAdmin(admin.ModelAdmin):
+    list_display = ("pk", "created_by", "status", "created_at")
+    list_filter = ("status", "created_at")
+    search_fields = ("pk", "idempotency_key", "created_by__email")
+    readonly_fields = ("pk", "created_at", "updated_at")
+    list_select_related = ("created_by",)
     date_hierarchy = "created_at"
 ```
 
-Uses `list_select_related = ("user",)` to prevent N+1 queries. `date_hierarchy` provides date-based navigation for upload history. Computed/auto fields are read-only to prevent manual override.
+```python
+@admin.register(UploadFile)
+class UploadFileAdmin(admin.ModelAdmin):
+    list_display = ("original_filename", "uploaded_by", "content_type", "size_bytes", "status", "created_at")
+    list_filter = ("status", "content_type", "created_at")
+    search_fields = ("original_filename", "sha256", "uploaded_by__email")
+    readonly_fields = ("pk", "size_bytes", "content_type", "sha256", "status", "error_message", "created_at", "updated_at")
+    list_select_related = ("uploaded_by", "batch")
+    date_hierarchy = "created_at"
+```
+
+```python
+@admin.register(UploadSession)
+class UploadSessionAdmin(admin.ModelAdmin):
+    list_display = ("pk", "file", "status", "completed_parts", "total_parts", "bytes_received", "total_size_bytes", "created_at")
+    list_filter = ("status", "created_at")
+    search_fields = ("pk", "idempotency_key", "upload_token")
+    readonly_fields = ("pk", "bytes_received", "completed_parts", "created_at", "updated_at")
+    list_select_related = ("file",)
+    date_hierarchy = "created_at"
+```
+
+```python
+@admin.register(UploadPart)
+class UploadPartAdmin(admin.ModelAdmin):
+    list_display = ("pk", "session", "part_number", "size_bytes", "status", "created_at")
+    list_filter = ("status",)
+    search_fields = ("pk", "session__pk")
+    readonly_fields = ("pk", "created_at", "updated_at")
+    list_select_related = ("session",)
+```
+
+All upload admin classes use `list_select_related` to prevent N+1 queries. `date_hierarchy` provides date-based navigation for upload history (except `UploadPart` which is ordered by `part_number`). Computed/auto fields are read-only to prevent manual override.
 
 ## Conventions
 

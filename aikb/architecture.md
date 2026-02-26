@@ -60,12 +60,12 @@ doorito/
 │   ├── templatetags/   # frontend_tags.py
 │   ├── templates/      # frontend/ namespace (base, auth, dashboard, errors, components)
 │   └── urls.py         # /app/ URL prefix
-├── uploads/        # File upload infrastructure
-│   ├── models.py       # IngestFile (temporary file with lifecycle tracking)
-│   ├── admin.py        # IngestFileAdmin
-│   ├── services/       # uploads.py (validate_file, create_ingest_file, consume_ingest_file)
-│   ├── tasks.py        # cleanup_expired_ingest_files_task
-│   ├── tests/          # test_services.py, test_tasks.py
+├── uploads/        # Batched, chunked file upload infrastructure
+│   ├── models.py       # UploadBatch, UploadFile, UploadSession, UploadPart (UUID v7 PKs)
+│   ├── admin.py        # UploadBatchAdmin, UploadFileAdmin, UploadSessionAdmin, UploadPartAdmin
+│   ├── services/       # uploads.py (file + batch services), sessions.py (session + part services)
+│   ├── tasks.py        # cleanup_expired_upload_files_task
+│   ├── tests/          # test_models.py, test_services.py, test_sessions.py, test_tasks.py
 │   └── migrations/     # 0001_initial.py
 ├── templates/      # Project-level templates
 │   └── base.html       # Root base template (loads Tailwind, HTMX, Alpine.js)
@@ -131,5 +131,5 @@ Three lightweight tools complement Django's server-rendered architecture:
 See [tasks.md](tasks.md) for details.
 
 - **Celery** with PostgreSQL broker via SQLAlchemy transport (no Redis)
-- **Tasks**: `cleanup_expired_ingest_files_task` (uploads app) -- TTL-based cleanup of expired ingest files
+- **Tasks**: `cleanup_expired_upload_files_task` (uploads app) -- TTL-based cleanup of expired upload files
 - **Dev mode**: `CELERY_TASK_ALWAYS_EAGER=True` (synchronous, no broker needed)

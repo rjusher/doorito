@@ -36,6 +36,14 @@ from common.utils import generate_reference
 reference = models.CharField(max_length=20, unique=True, default=partial(generate_reference, "ORD"))
 ```
 
+**UUID v7 primary keys**: Use `uuid7()` from `common/utils.py` for time-ordered UUIDs. The wrapper converts `uuid_utils.uuid7()` to stdlib `uuid.UUID` for Django `UUIDField` compatibility:
+```python
+from common.utils import uuid7
+
+id = models.UUIDField(primary_key=True, default=uuid7, editable=False)
+```
+Note: `uuid_utils.UUID` is NOT a subclass of `uuid.UUID` — always use the wrapper, never call `uuid_utils.uuid7()` directly in model defaults.
+
 **Status fields**: Use CharField with TextChoices, not IntegerChoices:
 ```python
 class Status(models.TextChoices):

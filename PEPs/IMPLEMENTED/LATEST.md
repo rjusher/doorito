@@ -13,6 +13,11 @@ This file tracks all PEPs that have been fully implemented. Once a PEP is implem
 - **Summary**: Brief description of what was implemented and its impact.
 -->
 
+### PEP 0003: Extend Data Models
+- **Implemented**: 2026-02-26
+- **Commit(s)**: `56767cc`
+- **Summary**: Redesigned the uploads data layer from a single `IngestFile` model into four interconnected models supporting batched, chunked file uploads. Added `UploadBatch` (groups files into logical batches with idempotency support), `UploadFile` (redesigned from `IngestFile` with UUID v7 PK, SHA-256 content hash, JSONField metadata, SET_NULL user FK, and a richer status lifecycle: uploading→stored→processed/deleted/failed), `UploadSession` (one-to-one with `UploadFile`, tracks chunked upload progress with byte counters and part tracking), and `UploadPart` (individual chunks with UniqueConstraint on session+part_number). Added `uuid7()` wrapper in `common/utils.py` for Django-compatible UUID v7 generation. Implemented 11 service functions across two modules: `uploads/services/uploads.py` (file validation, creation, status transitions, batch management) and `uploads/services/sessions.py` (session creation, part recording, session completion). Updated the cleanup task to `cleanup_expired_upload_files_task`. Registered 4 admin classes with optimized list displays. Wrote 40 tests covering models, services, sessions, and tasks.
+
 ### PEP 0002: Rename FileUpload to IngestFile
 - **Implemented**: 2026-02-25
 - **Commit(s)**: `c0ab09a` (model, admin, migration), remaining changes uncommitted (to be included in finalization commit)

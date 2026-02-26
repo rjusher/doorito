@@ -51,9 +51,10 @@ The first task module exists in the `uploads` app. Celery autodiscovery (`boot/c
 
 ### uploads/tasks.py
 
-**`cleanup_expired_ingest_files_task`**
-- **Name**: `uploads.tasks.cleanup_expired_ingest_files_task`
-- **Purpose**: Deletes ingest files older than `FILE_UPLOAD_TTL_HOURS` (default 24 hours). Removes both physical files from disk and database records.
+**`cleanup_expired_upload_files_task`**
+- **Name**: `uploads.tasks.cleanup_expired_upload_files_task`
+- **Purpose**: Deletes upload files older than `FILE_UPLOAD_TTL_HOURS` (default 24 hours). Removes both physical files from disk and database records.
+- **Model**: `UploadFile` (lazy import inside task body)
 - **Batch limit**: Processes at most 1000 expired records per run to stay within `CELERY_TASK_TIME_LIMIT` (300s).
 - **Settings read**: `FILE_UPLOAD_TTL_HOURS` (via `getattr` with 24-hour default)
 - **Queue**: `default` (Celery's default routing — appropriate for maintenance tasks)

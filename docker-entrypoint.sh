@@ -30,6 +30,12 @@ case "${1:-web}" in
             -c "${CELERY_CONCURRENCY:-4}" \
             --loglevel="${LOG_LEVEL:-info}"
         ;;
+    celery-beat)
+        echo "[entrypoint] Starting celery beat..."
+        exec celery -A boot beat \
+            --scheduler django_celery_beat.schedulers:DatabaseScheduler \
+            --loglevel="${LOG_LEVEL:-info}"
+        ;;
     doorito)
         shift
         exec python /app/doorito "$@"

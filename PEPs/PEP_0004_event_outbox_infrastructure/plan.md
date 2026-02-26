@@ -31,19 +31,19 @@ Read these files before starting implementation:
 - [ ] **PEP 0003 is implemented** — Upload models are in place (first consumers of the outbox)
 - [ ] **`uuid_utils` is installed** — Required for UUID v7 PKs (already added by PEP 0003)
 
+<!-- Amendment 2026-02-26: Added prerequisite steps for common/services/ and common/admin.py creation (discussions.md Q3, Q4). Replaced Step 6 celery-beat with on-demand dispatch (discussions.md Design Decision). -->
 ## Implementation Steps
 
 *To be detailed during the planning phase (`make claude-pep-plan PEP=0004`). High-level outline:*
 
-- [ ] **Step 1**: Add `OutboxEvent` model to `common/models.py`
+- [ ] **Step 1**: Add `OutboxEvent` model to `common/models.py` (use `common.utils.uuid7`, `db_table = "outbox_event"`)
 - [ ] **Step 2**: Generate and apply migration
-- [ ] **Step 3**: Add `OutboxEventAdmin` to `common/admin.py`
-- [ ] **Step 4**: Create `common/services/outbox.py` with `emit_event()` function
-- [ ] **Step 5**: Create delivery Celery task in `common/tasks.py`
-- [ ] **Step 6**: Register periodic task in Celery beat schedule
-- [ ] **Step 7**: Write tests (model, service, task)
-- [ ] **Step 8**: Update aikb/ documentation
-- [ ] **Step 9**: Run system checks and lint
+- [ ] **Step 3**: Create `common/admin.py` with `OutboxEventAdmin` (file does not exist yet)
+- [ ] **Step 4**: Create `common/services/__init__.py` and `common/services/outbox.py` with `emit_event()` function (directory does not exist yet)
+- [ ] **Step 5**: Create delivery Celery task in `common/tasks.py` (on-demand via `emit_event()` + `transaction.on_commit()`, not celery-beat)
+- [ ] **Step 6**: Create `common/tests/` with test modules (model, service, task)
+- [ ] **Step 7**: Update aikb/ documentation
+- [ ] **Step 8**: Run system checks and lint
 
 ## Testing
 

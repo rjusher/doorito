@@ -29,7 +29,7 @@ See `PEPs/ABOUT.md` for full PEP documentation and `CLAUDE.md` for the PEP lifec
 | Tailwind CSS v4 standalone CLI | Ready |
 | HTMX + Alpine.js vendored | Ready |
 | Celery with Postgres broker | Ready |
-| Docker Compose (web + db + worker) | Ready |
+| Docker Compose (web + db + worker + beat) | Ready |
 | CLI skeleton (doorito script) | Ready |
 | PEP workflow system | Ready |
 | aikb documentation system | Ready |
@@ -44,5 +44,4 @@ Some natural next steps (each should be a PEP):
 - REST API
 - Multi-tenancy / RBAC
 - S3 / cloud storage for media files
-- Celery beat scheduling for periodic tasks (e.g., upload cleanup)
 - Production deployment (K8s, etc.)

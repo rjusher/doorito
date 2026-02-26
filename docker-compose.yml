@@ -40,5 +40,17 @@ services:
       db:
         condition: service_healthy
 
+  celery-beat:
+    build: .
+    command: celery-beat
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgres://${POSTGRES_USER:-doorito}:${POSTGRES_PASSWORD:-doorito}@db:5432/${POSTGRES_DB:-doorito}
+      - CELERY_BROKER_URL=sqla+postgresql://${POSTGRES_USER:-doorito}:${POSTGRES_PASSWORD:-doorito}@db:5432/${POSTGRES_DB:-doorito}
+    depends_on:
+      db:
+        condition: service_healthy
+
 volumes:
   postgres_data:

@@ -21,6 +21,7 @@ A single entrypoint script dispatches by role argument. Sets `DJANGO_SETTINGS_MO
 |----------|-----------------|
 | `web` (default) | `gunicorn boot.wsgi:application --bind 0.0.0.0:$WEB_PORT --workers $WEB_WORKERS` |
 | `celery-worker` | `celery -A boot worker -Q high,default -c $CELERY_CONCURRENCY --loglevel=$LOG_LEVEL` |
+| `celery-beat` | `celery -A boot beat --scheduler DatabaseScheduler --loglevel=$LOG_LEVEL` |
 | `doorito` | CLI with remaining args (`python /app/doorito "$@"`) |
 | `dev` | Runs `collectstatic --noinput` then `python manage.py runserver 0.0.0.0:$WEB_PORT` |
 | `manage` | `python manage.py` with remaining args |
@@ -33,10 +34,11 @@ A single entrypoint script dispatches by role argument. Sets `DJANGO_SETTINGS_MO
 | `web` | Build from Dockerfile | 8000 | Django application server (gunicorn) |
 | `db` | postgres:16-alpine | 5432 | PostgreSQL database |
 | `celery-worker` | Build from Dockerfile | -- | Async task processing |
+| `celery-beat` | Build from Dockerfile | -- | Periodic task scheduling |
 
 **No Redis** -- Celery uses PostgreSQL as broker via SQLAlchemy transport.
 **No Daphne** -- no WebSocket support.
-**No celery-beat** -- no periodic tasks defined yet.
+**celery-beat** -- periodic task scheduling via `django-celery-beat` DatabaseScheduler.
 
 ### Volumes
 - `postgres_data` -- persistent database storage
@@ -50,6 +52,7 @@ Layers on top of `docker-compose.yml` for Dev-appropriate settings:
 
 - **web**: Uses `dev` entrypoint role (runserver with auto-reload), sets `DJANGO_CONFIGURATION=Dev`, `DJANGO_DEBUG=True`, `CELERY_TASK_ALWAYS_EAGER=True`. Mounts source code as volume.
 - **celery-worker**: Moved to `celery` profile (not started by default since tasks run eagerly in dev).
+- **celery-beat**: Moved to `celery` profile (not started by default since tasks run eagerly in dev).
 
 ```bash
 # Start dev stack (web + db only, no celery worker)
@@ -68,6 +71,7 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile celery 
 ```
 web: DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python manage.py runserver 0.0.0.0:${WEB_PORT:-8000}
 worker: DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev celery -A boot worker -Q high,default -c 4 --loglevel=info
+beat: DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev celery -A boot beat --scheduler django_celery_beat.schedulers:DatabaseScheduler --loglevel=info
 ```
 
 Run all processes: `honcho start -f Procfile.dev`
@@ -95,6 +99,7 @@ Port is configurable via `WEB_PORT` environment variable (default 8000).
 |----------|---------|-------------|
 | `CELERY_BROKER_URL` | `sqla+postgresql://doorito:doorito@localhost:5432/doorito` | Postgres broker URL |
 | `CELERY_TASK_ALWAYS_EAGER` | `True` (Dev) | Sync execution in dev |
+| `CLEANUP_UPLOADS_INTERVAL_HOURS` | `6` | Hours between upload cleanup runs (crontab) |
 
 ### Docker Entrypoint
 | Variable | Default | Description |

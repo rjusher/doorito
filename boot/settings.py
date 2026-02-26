@@ -31,6 +31,7 @@ class Base(Configuration):
         "django.contrib.staticfiles",
         # Third-party apps
         "django_celery_results",
+        "django_celery_beat",
         "django_htmx",
         # Project apps
         "common",
@@ -135,10 +136,30 @@ class Base(Configuration):
     CELERY_RESULT_EXPIRES = 86400  # 24 hours
     CELERY_WORKER_HIJACK_ROOT_LOGGER = False
 
+    # Celery Beat (database scheduler)
+    CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"
+    CLEANUP_UPLOADS_INTERVAL_HOURS = 6  # Valid range: 1-24
+
+    @property
+    def CELERY_BEAT_SCHEDULE(self):
+        from celery.schedules import crontab
+
+        return {
+            "cleanup-expired-upload-files": {
+                "task": "uploads.tasks.cleanup_expired_upload_files_task",
+                "schedule": crontab(
+                    minute=0, hour=f"*/{self.CLEANUP_UPLOADS_INTERVAL_HOURS}"
+                ),
+                "options": {"queue": "default"},
+            },
+        }
+
     # File upload settings
     FILE_UPLOAD_MAX_SIZE = 52_428_800  # 50 MB
     FILE_UPLOAD_TTL_HOURS = 24
-    FILE_UPLOAD_ALLOWED_TYPES = None  # None = accept all; set to list e.g. ["application/pdf"]
+    FILE_UPLOAD_ALLOWED_TYPES = (
+        None  # None = accept all; set to list e.g. ["application/pdf"]
+    )
 
     # Default field
     DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"

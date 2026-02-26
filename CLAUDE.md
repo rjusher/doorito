@@ -153,7 +153,7 @@ uv pip install -r requirements-dev.txt
 # Run development server
 python manage.py runserver
 
-# Run all development processes (web + celery worker)
+# Run all development processes (web + celery worker + celery beat)
 honcho start -f Procfile.dev
 
 # Database
@@ -242,11 +242,14 @@ Background tasks run via Celery with PostgreSQL as the broker (SQLAlchemy transp
 # Start celery worker (only needed if CELERY_TASK_ALWAYS_EAGER=False)
 DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev celery -A boot worker -Q high,default -c 4 --loglevel=info
 
+# Start celery beat (only needed if CELERY_TASK_ALWAYS_EAGER=False)
+DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev celery -A boot beat --scheduler django_celery_beat.schedulers:DatabaseScheduler --loglevel=info
+
 # Or run everything together via honcho
 honcho start -f Procfile.dev
 ```
 
-Tasks defined: `cleanup_expired_upload_files_task` (uploads app) — see `aikb/tasks.md` for details and conventions.
+Tasks defined: `cleanup_expired_upload_files_task` (uploads app, scheduled every 6 hours via celery-beat) — see `aikb/tasks.md` for details and conventions.
 
 ### Docker
 
@@ -270,13 +273,13 @@ docker compose run --rm web bash
 docker build -t doorito .
 ```
 
-Services: web (gunicorn), db (PostgreSQL 16), celery-worker.
+Services: web (gunicorn), db (PostgreSQL 16), celery-worker, celery-beat.
 
-Entrypoint environment variables: `RUN_MIGRATIONS` (default `false`), `WEB_PORT` (default `8000`), `WEB_WORKERS` (default `4`), `CELERY_CONCURRENCY` (default `4`), `LOG_LEVEL` (default `info`).
+Entrypoint environment variables: `RUN_MIGRATIONS` (default `false`), `WEB_PORT` (default `8000`), `WEB_WORKERS` (default `4`), `CELERY_CONCURRENCY` (default `4`), `LOG_LEVEL` (default `info`), `CLEANUP_UPLOADS_INTERVAL_HOURS` (default `6`).
 
 ### Docker Development
 
-A `docker-compose.dev.yml` override runs the full stack with Dev settings (runserver with auto-reload, eager Celery, DEBUG=True). Celery worker is skipped by default since tasks run eagerly.
+A `docker-compose.dev.yml` override runs the full stack with Dev settings (runserver with auto-reload, eager Celery, DEBUG=True). Celery worker and beat are in the `celery` profile (skipped by default since tasks run eagerly).
 
 ```bash
 # Start dev stack (web + db)
@@ -294,7 +297,7 @@ make docker-logs
 # Shell into web container
 make docker-shell
 
-# Opt into celery container (non-eager task processing)
+# Opt into celery worker + beat containers (non-eager task processing)
 docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile celery up --build
 ```
 
@@ -357,8 +360,11 @@ The sidebar (`components/sidebar.html`) provides navigation with collapsible des
 Uses **Celery** with **PostgreSQL** broker (SQLAlchemy transport), integrated with django-configurations:
 - `boot/celery.py` — Celery app setup (calls `configurations.setup()` before app creation)
 - `boot/__init__.py` — Exports `celery_app` so Celery loads when Django starts
+- `CELERY_BEAT_SCHEDULER` — `django_celery_beat.schedulers:DatabaseScheduler` (schedules stored in PostgreSQL)
+- `CELERY_BEAT_SCHEDULE` — `@property` in `Base` class defining periodic tasks (cleanup every 6 hours)
+- `CLEANUP_UPLOADS_INTERVAL_HOURS` — Hours between upload cleanup runs (default: 6)
 - **Dev mode**: `CELERY_TASK_ALWAYS_EAGER=True` — tasks run synchronously, no broker needed
-- **Production**: PostgreSQL broker, separate worker process in Docker Compose
+- **Production**: PostgreSQL broker, separate worker and beat processes in Docker Compose
 
 ## Coding Conventions
 

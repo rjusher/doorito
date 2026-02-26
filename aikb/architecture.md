@@ -132,4 +132,5 @@ See [tasks.md](tasks.md) for details.
 
 - **Celery** with PostgreSQL broker via SQLAlchemy transport (no Redis)
 - **Tasks**: `cleanup_expired_upload_files_task` (uploads app) -- TTL-based cleanup of expired upload files
+- **Periodic scheduling**: `django-celery-beat` with DatabaseScheduler (schedules stored in PostgreSQL). Beat process dispatches tasks on configured intervals. Initial schedule: upload cleanup every 6 hours.
 - **Dev mode**: `CELERY_TASK_ALWAYS_EAGER=True` (synchronous, no broker needed)

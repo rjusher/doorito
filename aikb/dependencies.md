@@ -48,6 +48,9 @@ uv pip install -r requirements-dev.txt
 | celery | >=5.4 | Distributed task queue |
 | sqlalchemy | >=2.0 | Celery broker transport (Postgres via SQLAlchemy) |
 | django-celery-results | >=2.5 | Store task results in Django database |
+| django-celery-beat | >=2.6,<3.0 | Periodic task scheduling (database scheduler) |
+
+Transitive dependencies (pulled by django-celery-beat): `django-timezone-field`, `python-crontab`, `cron-descriptor`, `tzdata`.
 
 ### Production Server
 | Package | Version | Purpose |

@@ -18,3 +18,12 @@ services:
       - .:/app
     environment:
       - DJANGO_CONFIGURATION=Dev
+
+  celery-beat:
+    profiles:
+      - celery
+    user: "${UID:-1000}:${GID:-1000}"
+    volumes:
+      - .:/app
+    environment:
+      - DJANGO_CONFIGURATION=Dev

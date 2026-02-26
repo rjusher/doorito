@@ -31,14 +31,15 @@ Implement a generic transactional outbox in the `common` app. The outbox provide
 
 ### OutboxEvent Model
 
+<!-- Amendment 2026-02-26: Fixed uuid7 import to use common.utils wrapper per conventions (discussions.md Q1), clarified Status choices (Q5) -->
 ```python
 class OutboxEvent(TimeStampedModel):
-    id = UUIDField(primary_key=True, default=uuid_utils.uuid7)
+    id = UUIDField(primary_key=True, default=uuid7)  # from common.utils
     aggregate_type = CharField(max_length=100)    # e.g., "UploadFile", "User"
     aggregate_id = CharField(max_length=100)       # str(pk) of the source record
     event_type = CharField(max_length=100)         # e.g., "file.stored", "user.created"
     payload = JSONField(default=dict)              # full serialized event data
-    status = CharField(...)                        # pending → sending → delivered / failed
+    status = CharField(...)                        # pending → delivered / failed / expired
     idempotency_key = CharField(max_length=255)    # deduplication
     attempts = PositiveIntegerField(default=0)
     max_attempts = PositiveIntegerField(default=5)

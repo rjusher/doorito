@@ -13,6 +13,11 @@ This file tracks all PEPs that have been fully implemented. Once a PEP is implem
 - **Summary**: Brief description of what was implemented and its impact.
 -->
 
+### PEP 0005: Celery Beat Infrastructure
+- **Implemented**: 2026-02-26
+- **Commit(s)**: (uncommitted — to be included in finalization commit)
+- **Summary**: Added `django-celery-beat` (v2.6–3.0) with the DatabaseScheduler to enable periodic task scheduling. Registered `django_celery_beat` in `INSTALLED_APPS`, applied its migrations (6 tables for schedule storage in PostgreSQL), and configured `CELERY_BEAT_SCHEDULER` to use the database scheduler. Added a `CELERY_BEAT_SCHEDULE` `@property` on the `Base` settings class that defines the initial schedule: `cleanup_expired_upload_files_task` running every 6 hours via crontab (at 00:00, 06:00, 12:00, 18:00 UTC), with the interval configurable through `CLEANUP_UPLOADS_INTERVAL_HOURS`. Added `celery-beat` role to `docker-entrypoint.sh`, a `celery-beat` service to both `docker-compose.yml` (production) and `docker-compose.dev.yml` (dev, in the `celery` profile), and a `beat:` process to `Procfile.dev`. Updated all relevant `aikb/` documentation files (`tasks.md`, `dependencies.md`, `deployment.md`, `architecture.md`, `specs-roadmap.md`) and `CLAUDE.md`. This unblocks PEP 0004 (Event Outbox Infrastructure) which requires periodic sweep scheduling.
+
 ### PEP 0003: Extend Data Models
 - **Implemented**: 2026-02-26
 - **Commit(s)**: `56767cc`

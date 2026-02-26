@@ -16,12 +16,9 @@ This section is a comprehensive review of the 5 proposed models. It covers archi
 
 The PEP proposes 5 models at once: `UploadBatch`, `IngestFile` (redesigned), `UploadSession`, `UploadPart`, and `PortalEventOutbox`. This is ambitious for a single PEP, especially since:
 
-- **No services are included** — the models are defined without business logic to operate on them. This means models like `UploadSession` and `UploadPart` define a chunked upload contract but no code to fulfill it.
-<!-- Review: Add services and business logic -->
-- **No consumers exist** — `PortalEventOutbox` defines a transactional outbox schema but no delivery worker. It will accumulate rows with no way to drain them.
-<!-- Review: Will be implemented later -->
-- **Testing is limited to CRUD** — without services, tests can only verify field defaults, FK cascades, and constraints. The interesting behavior (status transitions, counter updates, chunk assembly) is untestable.
-<!-- Review: services will be implemented add test accordingly -->
+- **Services and business logic are now in scope** — this PEP will deliver both models and their core service layer, ensuring each model has operational code. *(Decision: see Q4 below.)*
+- **Outbox delivery worker is deferred** — `PortalEventOutbox` defines a transactional outbox schema. The delivery worker (polling task) will be implemented in a follow-up PEP, but the outbox model and event-creation services are in scope for this PEP.
+- **Tests will cover services** — with services included, tests can verify status transitions, counter updates, and business logic beyond CRUD. *(Decision: see Q4 below.)*
 
 **Alternative: Phase the models across multiple PEPs.**
 
@@ -34,8 +31,7 @@ The PEP proposes 5 models at once: `UploadBatch`, `IngestFile` (redesigned), `Up
 
 **Trade-off**: Phasing means more migrations and more PEPs, but each PEP is smaller, testable end-to-end, and ships with services. Doing all 5 at once means a large schema with no operational code — essentially scaffolding.
 
-**Question for author**: Do you want all 5 models now (schema-first, services later), or would you prefer to phase them so each PEP delivers a working vertical slice?
-<!-- Review: Work them under this PEP update PEP scope and the PEP files to solve this issue -->
+**Decision**: All 5 models and their services will be delivered under this PEP. The PEP scope has been expanded to include the service layer alongside models, ensuring each model ships with operational code. The phased approach was considered but rejected — a single PEP avoids migration churn and keeps related models cohesive. *(See Q4 in Previously Resolved Questions.)*
 
 ---
 
@@ -62,7 +58,8 @@ The most consequential design decision in this PEP is replacing Django's `FileFi
 The abstract pointer pattern is justified only when you need **multiple active backends per row simultaneously** (e.g., "this file is replicated to both S3 us-east-1 AND GCS eu-west-1"). For Doorito's case — one file, one backend at a time — `FileField` with a custom storage backend gives you everything the pointers give you, plus `.url`, `.delete()`, `.open()`, and admin integration for free.
 
 **Recommendation**: Keep `FileField` with a configurable storage backend. Add `sha256` and `metadata` as separate fields alongside it. If per-instance backend routing is needed later, a custom storage class can inspect a model field to route. This preserves Django's file handling ecosystem while still supporting the new fields (sha256, metadata, content_type, etc.).
-<!-- Review: Keep the current FileField -->
+
+**Decision**: Keep Django's `FileField`. The abstract storage pointer design (`storage_backend`/`storage_bucket`/`storage_key`) is rejected. `FileField` retains `.url`, `.delete()`, `.open()`, admin upload widgets, and django-storages compatibility for free. New fields (`sha256`, `metadata`, `content_type`) are added alongside it. *(See Q5 in Previously Resolved Questions.)*
 
 **Alternative if you truly want the abstract pointers**: Acknowledge the cost explicitly. The service layer PEP will need to implement URL generation, file deletion, file streaming, and admin integration from scratch. This is significant work.
 
@@ -84,6 +81,8 @@ Option 3 is arguably defensible (ingestion vs mechanism), but it will confuse ne
 
 **Question for author**: Is the mixed naming intentional, or should we unify?
 
+**Decision**: Rename `IngestFile` to `UploadFile`. All upload models use the `Upload*` prefix (`UploadBatch`, `UploadFile`, `UploadSession`, `UploadPart`), matching the `uploads` app name. This supersedes PEP 0002's `FileUpload → IngestFile` rename — the model is being completely redesigned in this PEP. *(See Q6 in Previously Resolved Questions.)*
+
 ---
 
 #### 3. IngestFile — Status Choices
@@ -95,6 +94,8 @@ Proposed: `uploading → stored / failed / deleted`
 **Suggestion**: Consider adding `PROCESSED` or keeping `CONSUMED`:
 - `uploading → stored → processed / deleted`
 - `uploading → failed`
+
+**Decision**: Add `PROCESSED` status. The full status flow becomes: `uploading → stored → processed / deleted` and `uploading → failed`. This preserves the downstream processing lifecycle. *(See Q7 in Previously Resolved Questions.)*
 
 Or use a separate field like `processed_at` (nullable DateTimeField) to track consumption without adding another status value.
 
@@ -114,6 +115,8 @@ The `total_files`, `stored_files`, `failed_files` counters are denormalized. Thi
 
 **Recommendation**: Option 1 or 2 for now. Denormalized counters are a premature optimization. Add them later if `COUNT()` proves to be a bottleneck (it won't at this scale).
 
+**Decision**: Option 1 — drop the denormalized counters (`total_files`, `stored_files`, `failed_files`) entirely. Use `batch.files.filter(status=...).count()` in service-layer queries. Counters can be added later as a performance optimization if needed. *(See Q8 in Previously Resolved Questions.)*
+
 ---
 
 #### 5. UploadBatch — Is It Needed Now?
@@ -126,6 +129,8 @@ The `total_files`, `stored_files`, `failed_files` counters are denormalized. Thi
 If `IngestFile` is the core entity and batching is a UX concern, `UploadBatch` can be deferred until the upload UI/API PEP. Adding a nullable `batch` FK to `IngestFile` later is a non-breaking migration.
 
 ---
+
+**Decision**: Keep `UploadBatch` in this PEP. Batching is part of the upload data model. Defining it now ensures the schema is ready when the API PEP is built.
 
 #### 6. UploadSession + UploadPart — Premature Abstraction?
 
@@ -140,6 +145,8 @@ These two models implement tus.io / S3 multipart upload semantics. This is sophi
 **A) Embedded session fields on IngestFile** — Add `upload_id` (CharField, nullable) and `upload_finished_at` (DateTimeField, nullable) to `IngestFile`. Small files set `upload_finished_at` immediately. Large files get an `upload_id` and null `upload_finished_at` until assembly completes. This is the HackSoft/direct-to-S3 pattern and works well for single-backend setups.
 
 **B) Defer to the upload API PEP** — Define `UploadSession` and `UploadPart` when the chunked upload API is being built. The models should be co-designed with the service layer that manages chunk receipt, assembly, and retry.
+
+**Decision**: Keep `UploadSession` and `UploadPart` in this PEP. The API PEP is next and needs these models ready. Co-designing models and services together (as decided in Q4) addresses the concern about models without consumers.
 
 **C) Keep the separate models but make the OneToOne nullable** — `file = OneToOneField(IngestFile, null=True, on_delete=CASCADE)`. Sessions can exist before the file record is finalized. But this adds complexity.
 
@@ -173,6 +180,14 @@ This pattern makes the outbox record **self-contained** — consumers read the p
 
 **Recommendation**: Either (a) defer the outbox to a dedicated "event infrastructure" PEP where the model, delivery worker, and consumer pattern are designed together, or (b) use the aggregate/payload pattern in `common/` so it's reusable across apps.
 
+**Decision**: Defer the event outbox to a dedicated event infrastructure PEP. Remove `PortalEventOutbox` from PEP 0003 scope entirely. The future PEP should:
+- Name the model `OutboxEvent` (consistent noun-phrase naming)
+- Place it in `common/` (cross-cutting, reusable across apps)
+- Use the aggregate/payload pattern with no FK (self-contained events)
+- Include the delivery worker (polling task or CDC)
+
+This reduces PEP 0003 from 5 models to 4: `UploadBatch`, `UploadFile`, `UploadSession`, `UploadPart`. *(See Q9 in Previously Resolved Questions.)*
+
 ---
 
 #### 8. UUID v4 vs UUID v7
@@ -188,6 +203,8 @@ Python 3.14 adds `uuid.uuid7()` natively. For earlier Python versions, the `uuid
 
 **Question for author**: What Python version does Doorito target? Is adding a small dependency (`uuid6`) acceptable for UUID v7 support?
 
+**Decision**: Use UUID v7. Doorito runs on Python 3.12.3 which lacks native `uuid.uuid7()` (added in Python 3.14). Add the `uuid_utils` package as a dependency — it provides `uuid_utils.uuid7()` following RFC 9562 with a fast Rust-based implementation. All model UUID PKs use `default=uuid_utils.uuid7`. *(See Q10 in Previously Resolved Questions.)*
+
 ---
 
 ### Cross-Cutting Questions
@@ -200,6 +217,8 @@ The PEP explicitly defers services ("models only"). But models without services 
 
 **Question for author**: Are you comfortable with the risk that some fields may need adjustment when services are built? Or would you prefer to sketch service signatures alongside model definitions?
 
+**Decision**: Include service signatures alongside model definitions in the plan. Each model section should list the core service functions that operate on it, with their signatures and brief descriptions. This ensures the data model and service layer are co-designed. *(See Q11 in Previously Resolved Questions.)*
+
 #### C2: How many models does Doorito actually need right now?
 
 If the goal is to "move beyond the skeleton," the minimum viable extension might be:
@@ -210,6 +229,8 @@ If the goal is to "move beyond the skeleton," the minimum viable extension might
 Everything else (`UploadBatch`, `UploadSession`, `UploadPart`, `PortalEventOutbox`) is infrastructure for features that don't exist yet. YAGNI applies.
 
 **Question for author**: What's the near-term roadmap? Which features will be built next? That should drive which models are needed now.
+
+**Decision**: All upload models are needed now — we are modelling a broader system. With the outbox deferred to a separate PEP (see section 7 decision), the scope is 4 models: `UploadBatch`, `UploadFile`, `UploadSession`, `UploadPart`. The API PEP is next and depends on these models being ready.
 
 ---
 
@@ -230,3 +251,99 @@ Everything else (`UploadBatch`, `UploadSession`, `UploadPart`, `PortalEventOutbo
 ### Q3: Should PEP 0002 be completed first?
 
 **Resolution (plan.md)**: Require PEP 0002 completion first. Code-level renames must be done before PEP 0003 starts. The PEP 0002 database migration is moot (table is being dropped).
+
+---
+
+### Q4: Should all 5 models and services be in this PEP, or phased across multiple PEPs?
+
+**Date**: 2026-02-25
+
+**Context**: The Design Review raised concerns about delivering 5 models without services — dead schema with no operational code. The alternative was phasing across PEP 0003–0006, each delivering one model with its services.
+
+**Resolution**: All 5 models and their core services will be delivered in this PEP. The phased approach adds migration churn and PEP overhead. A single PEP keeps the related upload infrastructure cohesive. Services will be written alongside models so each model ships with operational code and testable behavior.
+
+**Impact**: summary.md "Out of Scope" section updated — services are no longer out of scope. plan.md must add service implementation steps and service tests.
+
+---
+
+### Q5: Should IngestFile keep Django's FileField or switch to abstract storage pointers?
+
+**Date**: 2026-02-25
+
+**Context**: The original design replaced `FileField` with three `CharField` pointers (`storage_backend`, `storage_bucket`, `storage_key`) for storage-agnostic file references. The Design Review argued this loses `.url`, `.delete()`, `.open()`, admin widgets, and django-storages compatibility — all of which `FileField` provides for free.
+
+**Resolution**: Keep Django's `FileField`. The abstract storage pointer design is rejected. `FileField` with a configurable storage backend already supports local FS and S3 via django-storages. Per-instance backend routing (if ever needed) can be handled by a custom storage class. New fields (`sha256`, `metadata`, `content_type`, `size_bytes`) are added alongside `FileField`.
+
+**Impact**: summary.md IngestFile comparison table and model description updated. plan.md IngestFile model definition, admin fields, and acceptance criteria updated. The `storage_backend`/`storage_bucket`/`storage_key` fields are removed. The existing `file = FileField(upload_to="uploads/%Y/%m/")` is retained.
+
+---
+
+### Q6: Should IngestFile be renamed to UploadFile for naming consistency?
+
+**Date**: 2026-02-25
+
+**Context**: The Design Review identified inconsistent naming between `IngestFile` (from PEP 0002) and the other `Upload*` models (`UploadBatch`, `UploadSession`, `UploadPart`). Three options were considered: rename to `UploadFile`, rename others to `Ingest*`, or keep mixed naming.
+
+**Resolution**: Rename `IngestFile` to `UploadFile`. The `Upload*` prefix is consistent with the `uploads` app name and the other models. PEP 0002's `FileUpload → IngestFile` rename is superseded — the model is being completely redesigned in PEP 0003 anyway.
+
+**Impact**: All PEP 0003 documents updated to use `UploadFile`. Model class name, `db_table`, `related_name`, admin class, service functions, task name, and test references all change from `IngestFile`/`ingest_file` to `UploadFile`/`upload_file`.
+
+---
+
+### Q7: Should UploadFile add a PROCESSED status?
+
+**Date**: 2026-02-25
+
+**Context**: The proposed status choices (`uploading/stored/failed/deleted`) dropped the `consumed` concept from the original model. Without a post-storage status, there's no way to distinguish files waiting for processing from files already processed.
+
+**Resolution**: Add `PROCESSED` status. The full status flow is: `uploading → stored → processed / deleted` and `uploading → failed`. This preserves the downstream processing lifecycle needed by future event consumers.
+
+**Impact**: summary.md and plan.md updated with 5 status values (`UPLOADING`, `STORED`, `PROCESSED`, `FAILED`, `DELETED`).
+
+---
+
+### Q8: Should UploadBatch keep denormalized counters?
+
+**Date**: 2026-02-25
+
+**Context**: The Design Review raised concerns about `total_files`, `stored_files`, `failed_files` counters: consistency risk with concurrent updates, silent corruption if service layer bugs skip counter updates, and inability to trust without reconciliation.
+
+**Resolution**: Drop the denormalized counters entirely (Option 1). Use `batch.files.filter(status=...).count()` in service-layer queries. PostgreSQL handles this efficiently at Doorito's scale. Counters can be added later as a performance optimization if `COUNT()` proves to be a bottleneck.
+
+**Impact**: summary.md and plan.md updated — `total_files`, `stored_files`, `failed_files` removed from `UploadBatch`. The `update_batch_counters` service function is removed.
+
+---
+
+### Q9: Should PortalEventOutbox be in PEP 0003 or deferred to a separate PEP?
+
+**Date**: 2026-02-25
+
+**Context**: The Design Review raised multiple concerns about the outbox: (a) "Portal" prefix is meaningless, (b) placing it in `uploads/` limits reuse, (c) the FK to IngestFile hard-couples it to uploads, (d) no delivery worker means rows accumulate forever. These concerns span naming, placement, schema design, and operational completeness.
+
+**Resolution**: Defer the event outbox to a dedicated event infrastructure PEP. Remove it from PEP 0003 scope entirely. The future PEP should name the model `OutboxEvent`, place it in `common/`, use the aggregate/payload pattern (no FK to specific models), and include the delivery worker.
+
+**Impact**: PEP 0003 reduces from 5 models to 4. The `emit_event` service function, outbox admin class, outbox tests, and all outbox references are removed from the plan. The `PortalEventOutbox` model section is removed from the summary.
+
+---
+
+### Q10: Should models use UUID v7 instead of UUID v4?
+
+**Date**: 2026-02-25
+
+**Context**: UUID v7 (time-ordered, RFC 9562) offers better B-tree index performance (~49% faster inserts, ~22% smaller indexes) and natural time-ordering. Python 3.12.3 (Doorito's runtime) lacks native `uuid.uuid7()` — that's added in Python 3.14.
+
+**Resolution**: Use UUID v7 via the `uuid_utils` package. This adds a small dependency but provides RFC 9562-compliant UUID v7 generation with a fast Rust-based implementation. All model UUID PKs use `default=uuid_utils.uuid7`.
+
+**Impact**: Add `uuid_utils` to `requirements.in` and recompile lockfiles. All UUID PK defaults change from `uuid.uuid4` to `uuid_utils.uuid7`. A new prerequisite step is added to the plan for dependency installation.
+
+---
+
+### Q11: Should service signatures be included alongside model definitions?
+
+**Date**: 2026-02-25
+
+**Context**: The Design Review asked whether models and services should be co-designed. The risk of defining models first is that the schema doesn't quite fit service needs, requiring later migrations.
+
+**Resolution**: Include service signatures alongside model definitions. Each model section in the plan lists the core service functions that operate on it. This ensures the data model and service layer are designed together.
+
+**Impact**: plan.md model definitions updated with associated service signatures.

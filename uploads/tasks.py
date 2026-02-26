@@ -13,13 +13,13 @@ BATCH_SIZE = 1000
 
 
 @shared_task(
-    name="uploads.tasks.cleanup_expired_ingest_files_task",
+    name="uploads.tasks.cleanup_expired_upload_files_task",
     bind=True,
     max_retries=2,
     default_retry_delay=60,
 )
-def cleanup_expired_ingest_files_task(self):
-    """Delete ingest files older than FILE_UPLOAD_TTL_HOURS.
+def cleanup_expired_upload_files_task(self):
+    """Delete upload files older than FILE_UPLOAD_TTL_HOURS.
 
     Processes at most BATCH_SIZE (1000) expired records per run to
     stay within CELERY_TASK_TIME_LIMIT (300s). Logs the remaining
@@ -30,21 +30,21 @@ def cleanup_expired_ingest_files_task(self):
     """
     from django.conf import settings
 
-    from uploads.models import IngestFile
+    from uploads.models import UploadFile
 
     ttl_hours = getattr(settings, "FILE_UPLOAD_TTL_HOURS", 24)
     cutoff = timezone.now() - timedelta(hours=ttl_hours)
-    expired_qs = IngestFile.objects.filter(created_at__lt=cutoff)
+    expired_qs = UploadFile.objects.filter(created_at__lt=cutoff)
     total_expired = expired_qs.count()
 
     if total_expired == 0:
-        logger.info("No expired ingest files to clean up.")
+        logger.info("No expired upload files to clean up.")
         return {"deleted": 0, "remaining": 0}
 
     batch_pks = list(
         expired_qs.order_by("pk").values_list("pk", flat=True)[:BATCH_SIZE]
     )
-    batch = IngestFile.objects.filter(pk__in=batch_pks)
+    batch = UploadFile.objects.filter(pk__in=batch_pks)
 
     deleted_files = 0
     for upload in batch.iterator():
@@ -58,8 +58,7 @@ def cleanup_expired_ingest_files_task(self):
     remaining = max(0, total_expired - deleted_count)
 
     logger.info(
-        "Cleaned up %d expired ingest files (%d files removed), "
-        "%d remaining.",
+        "Cleaned up %d expired upload files (%d files removed), %d remaining.",
         deleted_count,
         deleted_files,
         remaining,

@@ -20,6 +20,9 @@ django-celery-results>=2.5
 # Production server
 gunicorn>=23.0
 
+# Utilities
+uuid_utils>=0.9            # RFC 9562 UUID v7 (Python <3.14 lacks native uuid7)
+
 # CLI
 click>=8.0
 rich>=13.0

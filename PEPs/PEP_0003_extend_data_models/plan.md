@@ -67,24 +67,24 @@ Read these files before implementing any step:
 
 ## Prerequisites
 
-- [ ] **PEP 0002 is finalized** — Verify `uploads/models.py` contains `class IngestFile` (not `FileUpload`)
+- [x] **PEP 0002 is finalized** — Verify `uploads/models.py` contains `class IngestFile` (not `FileUpload`)
   ```bash
   grep -c "class IngestFile" uploads/models.py  # Expected: 1
   ```
 
-- [ ] **`uuid_utils` is installed** — Already in `requirements.in` (line 24: `uuid_utils>=0.9`)
+- [x] **`uuid_utils` is installed** — Already in `requirements.in` (line 24: `uuid_utils>=0.9`)
   ```bash
   source ~/.virtualenvs/inventlily-d22a143/bin/activate && python -c "import uuid_utils; print(uuid_utils.__version__)"
   # Expected: 0.14.1 or higher
   ```
 
-- [ ] **Database is migrated to current state** — All existing migrations applied
+- [x] **Database is migrated to current state** — All existing migrations applied
   ```bash
   source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python manage.py showmigrations uploads
   # Expected: [X] 0001_initial, [X] 0002_rename_fileupload_ingestfile
   ```
 
-- [ ] **No uncommitted changes in uploads/** — Clean git state for the files we'll modify
+- [x] **No uncommitted changes in uploads/** — Clean git state for the files we'll modify
   ```bash
   git diff --name-only uploads/
   # Expected: empty (no unstaged changes)
@@ -1242,6 +1242,185 @@ source ~/.virtualenvs/inventlily-d22a143/bin/activate && python -c "from fronten
 # Verify Celery app starts (autodiscovery)
 source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -c "from boot.celery import app; print('Celery app OK, tasks:', list(app.tasks.keys())[:5])"
 ```
+
+---
+
+## Detailed Todo List
+
+### Phase 1: Prerequisites & Setup
+
+- [x] Verify PEP 0002 is finalized — `grep -c "class IngestFile" uploads/models.py` returns 1
+- [x] Verify `uuid_utils` is installed and importable — `python -c "import uuid_utils; print(uuid_utils.__version__)"` returns ≥0.9
+- [x] Verify database is migrated to current state — `showmigrations uploads` shows `[X] 0001_initial`, `[X] 0002_rename_fileupload_ingestfile`
+- [x] Verify clean git state in `uploads/` — `git diff --name-only uploads/` is empty
+- [x] Read all context files listed in the Context Files table above
+
+### Phase 2: UUID v7 Foundation (Step 1)
+
+- [x] Add `import uuid` and `import uuid_utils as _uuid_utils` to `common/utils.py`
+- [x] Add `uuid7()` wrapper function to `common/utils.py` (returns `uuid.UUID(bytes=_uuid_utils.uuid7().bytes)`)
+- [x] Verify wrapper: `isinstance(uuid7(), uuid.UUID)` is True and `.version == 7`
+- [x] Run `ruff check common/utils.py` — no issues
+
+### Phase 3: Model Layer (Steps 2–4)
+
+- [x] Delete `uploads/migrations/0001_initial.py`
+- [x] Delete `uploads/migrations/0002_rename_fileupload_ingestfile.py`
+- [x] Verify only `__init__.py` remains in `uploads/migrations/`
+- [x] Rewrite `uploads/models.py` — replace entire file with new import block:
+  - [x] Import `TimeStampedModel`, `uuid7`, `settings`, `models`
+- [x] Write `UploadBatch` model with:
+  - [x] `Status` TextChoices: INIT, IN_PROGRESS, COMPLETE, PARTIAL, FAILED
+  - [x] UUID v7 PK, `created_by` FK (SET_NULL), `status`, `idempotency_key`
+  - [x] `Meta`: `db_table`, `verbose_name`, `ordering`, `__str__`
+- [x] Write `UploadFile` model with:
+  - [x] `Status` TextChoices: UPLOADING, STORED, PROCESSED, FAILED, DELETED
+  - [x] UUID v7 PK, `batch` FK (SET_NULL), `uploaded_by` FK (SET_NULL)
+  - [x] `file` FileField, `original_filename`, `content_type`, `size_bytes`
+  - [x] `sha256` (indexed), `metadata` JSONField, `status`, `error_message`
+  - [x] `Meta`: `db_table`, `verbose_name`, `ordering`, 2 indexes, `__str__`
+- [x] Write `UploadSession` model with:
+  - [x] `Status` TextChoices: INIT, IN_PROGRESS, COMPLETE, FAILED, ABORTED
+  - [x] UUID v7 PK, `file` OneToOneField (CASCADE)
+  - [x] `status`, `chunk_size_bytes`, `total_size_bytes`, `total_parts`
+  - [x] `bytes_received`, `completed_parts`, `idempotency_key`, `upload_token`
+  - [x] `Meta`: `db_table`, `verbose_name`, `ordering`, `__str__`
+- [x] Write `UploadPart` model with:
+  - [x] `Status` TextChoices: PENDING, RECEIVED, FAILED
+  - [x] UUID v7 PK, `session` FK (CASCADE), `part_number`, `offset_bytes`, `size_bytes`
+  - [x] `sha256`, `status`, `temp_storage_key`
+  - [x] `Meta`: `db_table`, `verbose_name`, `ordering`, `UniqueConstraint(session, part_number)`, `__str__`
+- [x] Verify all 4 models import: `from uploads.models import UploadBatch, UploadFile, UploadSession, UploadPart`
+- [x] Verify UUID v7 PKs: `UploadBatch().pk.version == 7`
+- [x] Run `makemigrations uploads` — generates `0001_initial.py`
+- [x] Handle existing DB state: `migrate uploads zero --fake` then `migrate uploads`
+- [x] Verify migration applied: `showmigrations uploads` shows `[X] 0001_initial`
+- [x] Verify all 4 tables exist: `dbshell -- -c "\dt upload_*"` shows `upload_batch`, `upload_file`, `upload_session`, `upload_part`
+
+### Phase 4: Admin Configuration (Step 5)
+
+- [x] Rewrite `uploads/admin.py` — replace entire file
+- [x] Register `UploadBatchAdmin` with `list_display`, `list_filter`, `search_fields`, `readonly_fields`, `list_select_related`, `date_hierarchy`
+- [x] Register `UploadFileAdmin` with full display fields including `original_filename`, `content_type`, `size_bytes`, `status`
+- [x] Register `UploadSessionAdmin` with progress fields (`completed_parts`, `total_parts`, `bytes_received`)
+- [x] Register `UploadPartAdmin` with `list_select_related("session")`
+- [x] Verify: `django.contrib.admin.site.is_registered(Model)` returns True for all 4 models
+- [x] Run `python manage.py check` — no issues
+
+### Phase 5: Upload & Batch Services (Step 6)
+
+- [x] Rewrite `uploads/services/uploads.py` — replace entire file
+- [x] Write `validate_file(file, max_size=None)` — size check + MIME type check against settings
+- [x] Write `compute_sha256(file)` — chunk-based hashing with seek(0) before and after
+- [x] Write `create_upload_file(user, file, batch=None)` — validates, hashes, creates record (STORED on success, FAILED on validation error)
+- [x] Write `mark_file_processed(upload_file)` — atomic UPDATE with WHERE status=STORED, raises ValueError if 0 rows updated
+- [x] Write `mark_file_failed(upload_file, error="")` — sets FAILED status with error message
+- [x] Write `mark_file_deleted(upload_file)` — deletes physical file via `file.delete(save=False)`, sets DELETED status
+- [x] Write `create_batch(user, idempotency_key="")` — creates batch with INIT status
+- [x] Write `finalize_batch(batch)` — atomic, determines COMPLETE/PARTIAL/FAILED based on file statuses
+- [x] Verify all 8 functions import: `from uploads.services.uploads import validate_file, compute_sha256, ...`
+
+### Phase 6: Session & Part Services (Step 7)
+
+- [x] Create new file `uploads/services/sessions.py`
+- [x] Write `create_upload_session(upload_file, total_size_bytes, chunk_size_bytes=None)` — calculates `total_parts` via `math.ceil`, creates session
+- [x] Write `record_upload_part(session, part_number, offset_bytes, size_bytes, sha256="")` — creates part with RECEIVED status, uses `F()` for atomic counter updates on session
+- [x] Write `complete_upload_session(session)` — validates all parts received, transitions session to COMPLETE and file to STORED
+- [x] Ensure correct import block uses `from django.db import models, transaction`
+- [x] Verify all 3 functions import: `from uploads.services.sessions import create_upload_session, ...`
+
+### Phase 7: Cleanup Task (Step 8)
+
+- [x] Rewrite `uploads/tasks.py` — replace entire file
+- [x] Write `cleanup_expired_upload_files_task` with:
+  - [x] Task name: `uploads.tasks.cleanup_expired_upload_files_task`
+  - [x] `bind=True`, `max_retries=2`, `default_retry_delay=60`
+  - [x] Lazy imports of `settings` and `UploadFile` inside task body
+  - [x] TTL-based filtering: `created_at__lt=cutoff`
+  - [x] Batch processing: max `BATCH_SIZE=1000` records per run
+  - [x] Physical file deletion via `upload.file.delete(save=False)` with `FileNotFoundError` handling
+  - [x] Returns `{"deleted": int, "remaining": int}`
+- [x] Verify task name: `cleanup_expired_upload_files_task.name == 'uploads.tasks.cleanup_expired_upload_files_task'`
+
+### Phase 8: Tests (Step 9)
+
+#### Model tests — `uploads/tests/test_models.py` (new file)
+- [x] Write UUID v7 PK tests for all 4 models (isinstance + version check)
+- [x] Write cascade SET_NULL test: delete user → `uploaded_by=None` on UploadFile
+- [x] Write cascade SET_NULL test: delete batch → `file.batch=None` on UploadFile
+- [x] Write cascade CASCADE test: delete UploadFile → UploadSession deleted
+- [x] Write cascade CASCADE test: delete UploadSession → UploadParts deleted
+- [x] Write UniqueConstraint test: duplicate `(session, part_number)` → `IntegrityError`
+- [x] Write JSONField default test: new UploadFile has `metadata == {}`
+- [x] Write status choices test for each model's Status class
+
+#### Upload service tests — `uploads/tests/test_services.py` (rewrite)
+- [x] Write `validate_file` tests: valid file, oversized, unknown extension, disallowed type, allowed_types=None, custom max_size (~6 tests)
+- [x] Write `compute_sha256` test: known input → known hash (1 test)
+- [x] Write `create_upload_file` tests: valid → STORED with sha256, oversized → FAILED, with batch (~3 tests)
+- [x] Write `mark_file_processed` tests: STORED → PROCESSED, non-STORED raises ValueError (~2 tests)
+- [x] Write `mark_file_failed` test: sets FAILED with error message (~1 test)
+- [x] Write `mark_file_deleted` test: deletes physical file + sets DELETED (~1 test)
+- [x] Write `create_batch` test: creates with INIT status (~1 test)
+- [x] Write `finalize_batch` tests: all STORED → COMPLETE, mixed → PARTIAL, all FAILED → FAILED (~3 tests)
+
+#### Session service tests — `uploads/tests/test_sessions.py` (new file)
+- [x] Write `create_upload_session` tests: default chunk size, custom chunk size, total_parts calculation (~2 tests)
+- [x] Write `record_upload_part` tests: records part with RECEIVED status, updates session counters (~2 tests)
+- [x] Write `complete_upload_session` tests: all parts → COMPLETE + file STORED, missing parts → ValueError (~2 tests)
+
+#### Task tests — `uploads/tests/test_tasks.py` (rewrite)
+- [x] Write test: no expired files → `{"deleted": 0, "remaining": 0}`
+- [x] Write test: expired files are deleted (records + physical files)
+- [x] Write test: missing physical file doesn't break cleanup
+- [x] Write test: non-expired files are kept
+- [x] Write test: batch limit (>1000 expired, only 1000 processed)
+
+#### Run all tests
+- [x] Run `pytest uploads/tests/ -v --tb=short` — all tests pass (40 tests)
+- [x] Verify test count is approximately 39 (actual: 40)
+
+### Phase 9: Code Quality (Steps 10–11)
+
+- [x] Run `ruff check uploads/ common/utils.py` — no issues
+- [x] Run `ruff format --check uploads/ common/utils.py` — no formatting changes needed
+- [x] Run `python manage.py check` — no issues
+- [x] Run `python manage.py makemigrations --check --dry-run` — no pending migrations
+
+### Phase 10: Documentation (aikb Impact Map)
+
+- [ ] Update `aikb/models.md` — replace IngestFile section with 4 new models (fields, statuses, lifecycles, indexes, constraints, FK cascades, ER diagram)
+- [ ] Update `aikb/services.md` — replace uploads services section with 8 functions in `uploads.py` + add new `sessions.py` section with 3 functions
+- [ ] Update `aikb/tasks.md` — rename `cleanup_expired_ingest_files_task` → `cleanup_expired_upload_files_task`, update model references
+- [ ] Update `aikb/admin.md` — replace IngestFileAdmin section with 4 admin classes
+- [ ] Update `aikb/architecture.md` — update uploads app section (new models, new service modules, task name)
+- [ ] Update `aikb/conventions.md` — add UUID v7 PK convention with `common.utils.uuid7` wrapper pattern
+
+### Phase 11: Final Verification
+
+#### Acceptance criteria (from summary.md)
+- [ ] Verify 4 models importable: `UploadBatch`, `UploadFile`, `UploadSession`, `UploadPart`
+- [ ] Verify all models use UUID v7 PKs (version=7, isinstance uuid.UUID)
+- [ ] Verify all models inherit from `TimeStampedModel`
+- [ ] Verify `UploadFile` has `sha256`, `metadata`, `content_type` fields
+- [ ] Verify `UploadPart` UniqueConstraint on `(session, part_number)`
+- [ ] Verify user FKs use `SET_NULL`
+- [ ] Verify all 11 service functions importable
+- [ ] Verify cleanup task uses new model name
+- [ ] Verify all 4 admin classes registered
+
+#### Integration checks
+- [ ] Run full test suite: `pytest -v --tb=short` — all tests pass (all apps)
+- [ ] Run `python manage.py check` — no issues
+- [ ] Run `makemigrations --check --dry-run` — no pending migrations
+- [ ] Run `ruff check .` — clean
+- [ ] Run `ruff format --check .` — clean
+
+#### Regression checks
+- [ ] Verify `conftest.py` user fixture still works
+- [ ] Verify `accounts.models.User` imports correctly
+- [ ] Verify `frontend.views.dashboard.dashboard` imports correctly
+- [ ] Verify Celery app starts and discovers tasks
 
 ---
 

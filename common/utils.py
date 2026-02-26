@@ -2,9 +2,20 @@
 
 import logging
 import secrets
+import uuid
 from contextlib import contextmanager
 
+import uuid_utils as _uuid_utils
 from django.utils import timezone
+
+
+def uuid7():
+    """Generate a UUID v7 (time-ordered, RFC 9562) as a stdlib uuid.UUID.
+
+    Uses ``uuid_utils.uuid7()`` internally but converts to ``uuid.UUID``
+    for compatibility with Django's ``UUIDField``.
+    """
+    return uuid.UUID(bytes=_uuid_utils.uuid7().bytes)
 
 
 def generate_reference(prefix):

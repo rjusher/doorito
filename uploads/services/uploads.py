@@ -1,12 +1,15 @@
-"""Ingest file services for file validation, creation, and consumption."""
+"""Upload services for file validation, creation, and status transitions."""
 
+import contextlib
+import hashlib
 import logging
 import mimetypes
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
+from django.db import transaction
 
-from uploads.models import IngestFile
+from uploads.models import UploadBatch, UploadFile
 
 logger = logging.getLogger(__name__)
 
@@ -20,113 +23,232 @@ def validate_file(file, max_size=None):
             ``settings.FILE_UPLOAD_MAX_SIZE`` (50 MB).
 
     Returns:
-        A tuple of (mime_type, file_size).
+        A tuple of (content_type, size_bytes).
 
     Raises:
         ValidationError: If the file exceeds the size limit or has a
             disallowed MIME type.
     """
     max_size = max_size or settings.FILE_UPLOAD_MAX_SIZE
-    file_size = file.size
+    size_bytes = file.size
 
-    if file_size > max_size:
+    if size_bytes > max_size:
         raise ValidationError(
-            f"File size {file_size} bytes exceeds maximum "
-            f"of {max_size} bytes.",
+            f"File size {size_bytes} bytes exceeds maximum of {max_size} bytes.",
             code="file_too_large",
         )
 
-    mime_type, _ = mimetypes.guess_type(file.name)
-    if mime_type is None:
-        mime_type = "application/octet-stream"
+    content_type, _ = mimetypes.guess_type(file.name)
+    if content_type is None:
+        content_type = "application/octet-stream"
 
     allowed_types = settings.FILE_UPLOAD_ALLOWED_TYPES
-    if allowed_types is not None and mime_type not in allowed_types:
+    if allowed_types is not None and content_type not in allowed_types:
         raise ValidationError(
-            f"File type '{mime_type}' is not allowed. "
+            f"File type '{content_type}' is not allowed. "
             f"Allowed types: {', '.join(allowed_types)}",
             code="file_type_not_allowed",
         )
 
-    return mime_type, file_size
+    return content_type, size_bytes
 
 
-def create_ingest_file(user, file):
-    """Validate and store an ingest file.
+def compute_sha256(file):
+    """Compute SHA-256 hash of a file.
+
+    Reads the file in 64 KB chunks. Seeks back to the start after hashing
+    so the file can be saved by Django's FileField afterward.
 
     Args:
-        user: The User instance who owns this ingest file.
         file: A Django UploadedFile instance.
 
     Returns:
-        An IngestFile instance with status READY (success) or FAILED
+        Hex-encoded SHA-256 hash string (64 characters).
+    """
+    hasher = hashlib.sha256()
+    file.seek(0)
+    for chunk in file.chunks(chunk_size=65_536):
+        hasher.update(chunk)
+    file.seek(0)
+    return hasher.hexdigest()
+
+
+def create_upload_file(user, file, batch=None):
+    """Validate, hash, and store an upload file.
+
+    Args:
+        user: The User instance who uploaded the file (or None).
+        file: A Django UploadedFile instance.
+        batch: Optional UploadBatch to associate with.
+
+    Returns:
+        An UploadFile instance with status STORED (success) or FAILED
         (validation error).
     """
     try:
-        mime_type, file_size = validate_file(file)
+        content_type, size_bytes = validate_file(file)
     except ValidationError as exc:
-        upload = IngestFile.objects.create(
-            user=user,
+        upload = UploadFile.objects.create(
+            uploaded_by=user,
             file=file,
             original_filename=file.name,
-            file_size=file.size,
-            mime_type="unknown",
-            status=IngestFile.Status.FAILED,
+            content_type="unknown",
+            size_bytes=file.size,
+            batch=batch,
+            status=UploadFile.Status.FAILED,
             error_message=str(exc.message),
         )
         logger.warning(
-            "Ingest file failed validation for user %s: %s",
-            user.pk,
+            "Upload file failed validation: pk=%s user=%s error=%s",
+            upload.pk,
+            user.pk if user else None,
             exc.message,
         )
         return upload
 
-    upload = IngestFile.objects.create(
-        user=user,
+    sha256 = compute_sha256(file)
+
+    upload = UploadFile.objects.create(
+        uploaded_by=user,
         file=file,
         original_filename=file.name,
-        file_size=file_size,
-        mime_type=mime_type,
-        status=IngestFile.Status.READY,
+        content_type=content_type,
+        size_bytes=size_bytes,
+        sha256=sha256,
+        batch=batch,
+        status=UploadFile.Status.STORED,
     )
     logger.info(
-        "Ingest file created: pk=%s user=%s file=%s size=%d",
+        "Upload file created: pk=%s user=%s file=%s size=%d sha256=%s",
         upload.pk,
-        user.pk,
+        user.pk if user else None,
         file.name,
-        file_size,
+        size_bytes,
+        sha256[:16],
     )
     return upload
 
 
-def consume_ingest_file(ingest_file):
-    """Mark an ingest file as consumed by a downstream process.
+def mark_file_processed(upload_file):
+    """Transition an upload file from STORED to PROCESSED.
 
     Uses an atomic UPDATE with a WHERE clause on status to prevent
-    race conditions when multiple consumers attempt to consume the
-    same ingest file simultaneously.
+    race conditions.
 
     Args:
-        ingest_file: An IngestFile instance to consume.
+        upload_file: An UploadFile instance.
 
     Returns:
-        The updated IngestFile instance.
+        The updated UploadFile instance.
 
     Raises:
-        ValueError: If the ingest file is not in READY status (already
-            consumed, failed, or pending).
+        ValueError: If the file is not in STORED status.
     """
-    updated = IngestFile.objects.filter(
-        pk=ingest_file.pk,
-        status=IngestFile.Status.READY,
-    ).update(status=IngestFile.Status.CONSUMED)
+    updated = UploadFile.objects.filter(
+        pk=upload_file.pk,
+        status=UploadFile.Status.STORED,
+    ).update(status=UploadFile.Status.PROCESSED)
 
     if updated == 0:
         raise ValueError(
-            f"Cannot consume ingest file {ingest_file.pk}: "
-            f"status is '{ingest_file.status}', expected 'ready'."
+            f"Cannot mark upload file {upload_file.pk} as processed: "
+            f"status is '{upload_file.status}', expected 'stored'."
         )
 
-    ingest_file.refresh_from_db()
-    logger.info("Ingest file consumed: pk=%s", ingest_file.pk)
-    return ingest_file
+    upload_file.refresh_from_db()
+    logger.info("Upload file processed: pk=%s", upload_file.pk)
+    return upload_file
+
+
+def mark_file_failed(upload_file, error=""):
+    """Transition an upload file to FAILED status.
+
+    Args:
+        upload_file: An UploadFile instance.
+        error: Error message describing the failure.
+
+    Returns:
+        The updated UploadFile instance.
+    """
+    upload_file.status = UploadFile.Status.FAILED
+    upload_file.error_message = error
+    upload_file.save(update_fields=["status", "error_message", "updated_at"])
+    logger.warning("Upload file failed: pk=%s error=%s", upload_file.pk, error)
+    return upload_file
+
+
+def mark_file_deleted(upload_file):
+    """Transition an upload file to DELETED status and remove the physical file.
+
+    Args:
+        upload_file: An UploadFile instance.
+
+    Returns:
+        The updated UploadFile instance.
+    """
+    with contextlib.suppress(FileNotFoundError):
+        upload_file.file.delete(save=False)
+
+    upload_file.status = UploadFile.Status.DELETED
+    upload_file.save(update_fields=["status", "updated_at"])
+    logger.info("Upload file deleted: pk=%s", upload_file.pk)
+    return upload_file
+
+
+def create_batch(user, idempotency_key=""):
+    """Create a new upload batch.
+
+    Args:
+        user: The User instance creating the batch (or None).
+        idempotency_key: Optional client-provided key to prevent
+            duplicate batch creation.
+
+    Returns:
+        An UploadBatch instance.
+    """
+    batch = UploadBatch.objects.create(
+        created_by=user,
+        idempotency_key=idempotency_key,
+    )
+    logger.info(
+        "Upload batch created: pk=%s user=%s",
+        batch.pk,
+        user.pk if user else None,
+    )
+    return batch
+
+
+@transaction.atomic
+def finalize_batch(batch):
+    """Finalize a batch based on its files' statuses.
+
+    Transitions batch to:
+    - COMPLETE: all files are STORED or PROCESSED
+    - PARTIAL: some files are STORED/PROCESSED, some FAILED
+    - FAILED: all files are FAILED (or no files)
+
+    Args:
+        batch: An UploadBatch instance.
+
+    Returns:
+        The updated UploadBatch instance.
+    """
+    file_statuses = list(batch.files.values_list("status", flat=True))
+
+    if not file_statuses:
+        batch.status = UploadBatch.Status.FAILED
+    else:
+        success_statuses = {UploadFile.Status.STORED, UploadFile.Status.PROCESSED}
+        successes = sum(1 for s in file_statuses if s in success_statuses)
+        failures = sum(1 for s in file_statuses if s == UploadFile.Status.FAILED)
+
+        if failures == 0:
+            batch.status = UploadBatch.Status.COMPLETE
+        elif successes == 0:
+            batch.status = UploadBatch.Status.FAILED
+        else:
+            batch.status = UploadBatch.Status.PARTIAL
+
+    batch.save(update_fields=["status", "updated_at"])
+    logger.info("Upload batch finalized: pk=%s status=%s", batch.pk, batch.status)
+    return batch

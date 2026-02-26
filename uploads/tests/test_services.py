@@ -1,14 +1,21 @@
-"""Unit tests for ingest file services."""
+"""Unit tests for upload file services."""
+
+import hashlib
 
 import pytest
 from django.core.exceptions import ValidationError
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import override_settings
 
-from uploads.models import IngestFile
+from uploads.models import UploadBatch, UploadFile
 from uploads.services.uploads import (
-    consume_ingest_file,
-    create_ingest_file,
+    compute_sha256,
+    create_batch,
+    create_upload_file,
+    finalize_batch,
+    mark_file_deleted,
+    mark_file_failed,
+    mark_file_processed,
     validate_file,
 )
 
@@ -17,14 +24,14 @@ class TestValidateFile:
     """Tests for validate_file service."""
 
     def test_valid_file(self):
-        """Valid file within size limit returns (mime_type, file_size)."""
+        """Valid file within size limit returns (content_type, size_bytes)."""
         file = SimpleUploadedFile("report.pdf", b"fake pdf content")
-        mime_type, file_size = validate_file(file)
-        assert mime_type == "application/pdf"
-        assert file_size == 16
+        content_type, size_bytes = validate_file(file)
+        assert content_type == "application/pdf"
+        assert size_bytes == 16
 
     def test_file_exceeds_max_size(self):
-        """File exceeding FILE_UPLOAD_MAX_SIZE raises ValidationError."""
+        """File exceeding max_size raises ValidationError."""
         file = SimpleUploadedFile("big.pdf", b"x" * 100)
         with pytest.raises(ValidationError) as exc_info:
             validate_file(file, max_size=50)
@@ -33,9 +40,9 @@ class TestValidateFile:
     def test_unknown_extension_returns_octet_stream(self):
         """Unknown file extension returns application/octet-stream."""
         file = SimpleUploadedFile("data.xyz123", b"some data")
-        mime_type, file_size = validate_file(file)
-        assert mime_type == "application/octet-stream"
-        assert file_size == 9
+        content_type, size_bytes = validate_file(file)
+        assert content_type == "application/octet-stream"
+        assert size_bytes == 9
 
     @override_settings(FILE_UPLOAD_ALLOWED_TYPES=["application/pdf"])
     def test_disallowed_mime_type(self):
@@ -49,96 +56,181 @@ class TestValidateFile:
     def test_allowed_types_none_accepts_all(self):
         """FILE_UPLOAD_ALLOWED_TYPES=None accepts any file type."""
         file = SimpleUploadedFile("image.png", b"fake png")
-        mime_type, _file_size = validate_file(file)
-        assert mime_type == "image/png"
+        content_type, _size_bytes = validate_file(file)
+        assert content_type == "image/png"
 
     def test_custom_max_size_overrides_setting(self):
         """Custom max_size parameter overrides FILE_UPLOAD_MAX_SIZE."""
         file = SimpleUploadedFile("small.pdf", b"x" * 10)
-        # Should pass with custom max_size=20
-        _mime_type, file_size = validate_file(file, max_size=20)
-        assert file_size == 10
+        _content_type, size_bytes = validate_file(file, max_size=20)
+        assert size_bytes == 10
 
-        # Should fail with custom max_size=5
         with pytest.raises(ValidationError) as exc_info:
             validate_file(file, max_size=5)
         assert exc_info.value.code == "file_too_large"
 
 
-class TestCreateIngestFile:
-    """Tests for create_ingest_file service."""
+class TestComputeSha256:
+    """Tests for compute_sha256 service."""
 
-    @pytest.mark.django_db
-    def test_valid_upload_creates_ready_record(self, user, tmp_path, settings):
-        """Valid file creates IngestFile with status=READY."""
+    def test_known_hash(self):
+        """Known content produces expected SHA-256 hash."""
+        content = b"hello world"
+        file = SimpleUploadedFile("test.txt", content)
+        expected = hashlib.sha256(content).hexdigest()
+        assert compute_sha256(file) == expected
+
+
+@pytest.mark.django_db
+class TestCreateUploadFile:
+    """Tests for create_upload_file service."""
+
+    def test_valid_upload_creates_stored_record(self, user, tmp_path, settings):
+        """Valid file creates UploadFile with status=STORED and sha256."""
         settings.MEDIA_ROOT = tmp_path
-        file = SimpleUploadedFile("document.pdf", b"pdf content here")
-        upload = create_ingest_file(user, file)
+        content = b"pdf content here"
+        file = SimpleUploadedFile("document.pdf", content)
+        upload = create_upload_file(user, file)
 
-        assert upload.status == IngestFile.Status.READY
+        assert upload.status == UploadFile.Status.STORED
         assert upload.original_filename == "document.pdf"
-        assert upload.file_size == 16
-        assert upload.mime_type == "application/pdf"
-        assert upload.user == user
+        assert upload.size_bytes == len(content)
+        assert upload.content_type == "application/pdf"
+        assert upload.uploaded_by == user
+        assert upload.sha256 == hashlib.sha256(content).hexdigest()
         assert upload.error_message == ""
 
-    @pytest.mark.django_db
     def test_oversized_upload_creates_failed_record(self, user, tmp_path, settings):
-        """File exceeding max size creates IngestFile with status=FAILED."""
+        """File exceeding max size creates UploadFile with status=FAILED."""
         settings.MEDIA_ROOT = tmp_path
-        settings.FILE_UPLOAD_MAX_SIZE = 10  # 10 bytes
+        settings.FILE_UPLOAD_MAX_SIZE = 10
         file = SimpleUploadedFile("big.pdf", b"x" * 100)
-        upload = create_ingest_file(user, file)
+        upload = create_upload_file(user, file)
 
-        assert upload.status == IngestFile.Status.FAILED
-        assert upload.mime_type == "unknown"
+        assert upload.status == UploadFile.Status.FAILED
+        assert upload.content_type == "unknown"
         assert "exceeds maximum" in upload.error_message
 
-    @pytest.mark.django_db
-    def test_upload_metadata_correct(self, user, tmp_path, settings):
-        """Returned IngestFile has correct original_filename, file_size, mime_type."""
+    def test_upload_with_batch(self, user, tmp_path, settings):
+        """Upload file can be associated with a batch."""
         settings.MEDIA_ROOT = tmp_path
-        file = SimpleUploadedFile("report.csv", b"a,b,c\n1,2,3")
-        upload = create_ingest_file(user, file)
+        batch = UploadBatch.objects.create(created_by=user)
+        file = SimpleUploadedFile("doc.pdf", b"content")
+        upload = create_upload_file(user, file, batch=batch)
 
-        assert upload.original_filename == "report.csv"
-        assert upload.file_size == 11
-        assert upload.mime_type == "text/csv"
+        assert upload.batch == batch
+        assert upload.status == UploadFile.Status.STORED
 
 
-class TestConsumeIngestFile:
-    """Tests for consume_ingest_file service."""
+@pytest.mark.django_db
+class TestMarkFileProcessed:
+    """Tests for mark_file_processed service."""
 
-    @pytest.mark.django_db
-    def test_ready_upload_transitions_to_consumed(self, user, tmp_path, settings):
-        """READY ingest file transitions to CONSUMED."""
+    def test_stored_to_processed(self, user, tmp_path, settings):
+        """STORED file transitions to PROCESSED."""
         settings.MEDIA_ROOT = tmp_path
         file = SimpleUploadedFile("doc.pdf", b"content")
-        upload = create_ingest_file(user, file)
-        assert upload.status == IngestFile.Status.READY
+        upload = create_upload_file(user, file)
+        assert upload.status == UploadFile.Status.STORED
 
-        result = consume_ingest_file(upload)
-        assert result.status == IngestFile.Status.CONSUMED
+        result = mark_file_processed(upload)
+        assert result.status == UploadFile.Status.PROCESSED
 
-    @pytest.mark.django_db
-    def test_already_consumed_raises_value_error(self, user, tmp_path, settings):
-        """Already CONSUMED ingest file raises ValueError."""
+    def test_non_stored_raises_value_error(self, user, tmp_path, settings):
+        """Non-STORED file raises ValueError."""
+        settings.MEDIA_ROOT = tmp_path
+        settings.FILE_UPLOAD_MAX_SIZE = 1
+        file = SimpleUploadedFile("doc.pdf", b"content too large")
+        upload = create_upload_file(user, file)
+        assert upload.status == UploadFile.Status.FAILED
+
+        with pytest.raises(ValueError, match="expected 'stored'"):
+            mark_file_processed(upload)
+
+
+@pytest.mark.django_db
+class TestMarkFileFailed:
+    """Tests for mark_file_failed service."""
+
+    def test_sets_failed_with_error(self, user, tmp_path, settings):
+        """Sets FAILED status with error message."""
         settings.MEDIA_ROOT = tmp_path
         file = SimpleUploadedFile("doc.pdf", b"content")
-        upload = create_ingest_file(user, file)
-        consume_ingest_file(upload)
+        upload = create_upload_file(user, file)
 
-        with pytest.raises(ValueError, match="expected 'ready'"):
-            consume_ingest_file(upload)
+        result = mark_file_failed(upload, error="Virus detected")
+        assert result.status == UploadFile.Status.FAILED
+        assert result.error_message == "Virus detected"
 
-    @pytest.mark.django_db
-    def test_failed_upload_raises_value_error(self, user, tmp_path, settings):
-        """FAILED ingest file raises ValueError."""
+
+@pytest.mark.django_db
+class TestMarkFileDeleted:
+    """Tests for mark_file_deleted service."""
+
+    def test_deletes_physical_file_and_sets_status(self, user, tmp_path, settings):
+        """Deletes physical file and sets DELETED status."""
         settings.MEDIA_ROOT = tmp_path
-        settings.FILE_UPLOAD_MAX_SIZE = 1  # Force failure
-        file = SimpleUploadedFile("doc.pdf", b"content that is too large")
-        upload = create_ingest_file(user, file)
-        assert upload.status == IngestFile.Status.FAILED
+        file = SimpleUploadedFile("doc.pdf", b"content")
+        upload = create_upload_file(user, file)
+        file_path = tmp_path / upload.file.name
 
-        with pytest.raises(ValueError, match="expected 'ready'"):
-            consume_ingest_file(upload)
+        result = mark_file_deleted(upload)
+        assert result.status == UploadFile.Status.DELETED
+        assert not file_path.exists()
+
+
+@pytest.mark.django_db
+class TestCreateBatch:
+    """Tests for create_batch service."""
+
+    def test_creates_batch_with_init_status(self, user):
+        """Creates batch with INIT status."""
+        batch = create_batch(user, idempotency_key="test-key")
+        assert batch.status == UploadBatch.Status.INIT
+        assert batch.created_by == user
+        assert batch.idempotency_key == "test-key"
+
+
+@pytest.mark.django_db
+class TestFinalizeBatch:
+    """Tests for finalize_batch service."""
+
+    def test_all_stored_complete(self, user, tmp_path, settings):
+        """All files STORED → batch COMPLETE."""
+        settings.MEDIA_ROOT = tmp_path
+        batch = UploadBatch.objects.create(created_by=user)
+        for _ in range(3):
+            file = SimpleUploadedFile("doc.pdf", b"content")
+            create_upload_file(user, file, batch=batch)
+
+        result = finalize_batch(batch)
+        assert result.status == UploadBatch.Status.COMPLETE
+
+    def test_mixed_statuses_partial(self, user, tmp_path, settings):
+        """Mix of STORED and FAILED → batch PARTIAL."""
+        settings.MEDIA_ROOT = tmp_path
+        batch = UploadBatch.objects.create(created_by=user)
+
+        file = SimpleUploadedFile("good.pdf", b"content")
+        create_upload_file(user, file, batch=batch)
+
+        settings.FILE_UPLOAD_MAX_SIZE = 1
+        file = SimpleUploadedFile("bad.pdf", b"too large content")
+        create_upload_file(user, file, batch=batch)
+
+        settings.FILE_UPLOAD_MAX_SIZE = 52_428_800  # Reset
+        result = finalize_batch(batch)
+        assert result.status == UploadBatch.Status.PARTIAL
+
+    def test_all_failed(self, user, tmp_path, settings):
+        """All files FAILED → batch FAILED."""
+        settings.MEDIA_ROOT = tmp_path
+        settings.FILE_UPLOAD_MAX_SIZE = 1
+        batch = UploadBatch.objects.create(created_by=user)
+
+        for _ in range(2):
+            file = SimpleUploadedFile("bad.pdf", b"too large")
+            create_upload_file(user, file, batch=batch)
+
+        result = finalize_batch(batch)
+        assert result.status == UploadBatch.Status.FAILED

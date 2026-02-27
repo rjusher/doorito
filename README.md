@@ -196,7 +196,128 @@ Set via `DJANGO_CONFIGURATION` environment variable. See [.env.example](.env.exa
 
 ## PEPs (Project Enhancement Proposals)
 
-All development is tracked through PEPs in the `PEPs/` directory. See [PEPs/ABOUT.md](PEPs/ABOUT.md) for the full workflow, and [CLAUDE.md](CLAUDE.md) for AI agent instructions.
+All development is tracked through PEPs in the `PEPs/` directory. Each PEP is a directory containing a `summary.md` (what and why) and `plan.md` (how, with checkable steps and verification commands), plus optional `research.md`, `discussions.md`, and `journal.md` files. See [PEPs/ABOUT.md](PEPs/ABOUT.md) for the full conventions.
+
+### PEP Lifecycle
+
+```
+Proposed -> Accepted -> Implementing -> Implemented
+         -> Rejected / Deferred / Withdrawn
+```
+
+### Manual PEP Commands
+
+```bash
+# Create a new PEP from template (auto-assigns next number)
+make pep-new TITLE=my_feature
+
+# Validate PEP completion checklist
+make pep-complete PEP=NNNN
+
+# Archive old IMPLEMENTED/LATEST.md entries
+make pep-archive
+```
+
+### AI-Assisted PEP Workflow (`claude-pep-*`)
+
+The project includes a full suite of `make claude-pep-*` targets that invoke [Claude Code](https://claude.ai/code) with structured prompts to drive each phase of the PEP lifecycle. Each target runs Claude in `--permission-mode acceptEdits` with a phase-specific prompt template from `scripts/prompts/`.
+
+#### Overview
+
+| Step | Command | What It Does |
+|------|---------|-------------|
+| 1 | `make claude-pep-draft DESC="..."` | Create a new PEP — Claude infers a title, runs `pep-new.sh`, fills in `summary.md` and `plan.md` |
+| 2 | `make claude-pep-research PEP=NNNN` | Deep codebase exploration — creates `research.md` with findings, key files, constraints |
+| 3 | `make claude-pep-plan PEP=NNNN` | Refine the plan with codebase-grounded analysis — updates `plan.md` with detailed steps |
+| 4 | `make claude-pep-discuss PEP=NNNN` | Resolve open questions — creates/updates `discussions.md` with design decisions |
+| 5 | `make claude-pep-todo PEP=NNNN` | Break plan into granular checklist — adds detailed sub-steps to `plan.md` |
+| 6 | `make claude-pep-preflight PEP=NNNN` | Validate plan against current codebase — returns ready/not-ready verdict |
+| 7 | `make claude-pep-implement PEP=NNNN` | Execute unchecked plan steps — checks off steps, updates `journal.md` |
+| 8 | `make claude-pep-review PEP=NNNN` | Review and resolve `<!-- REVIEW: ... -->` inline notes in PEP files |
+| 9 | `make claude-pep-finalize PEP=NNNN` | Close out — update `aikb/` docs, add `LATEST.md` entry, clean up PEP directory |
+
+#### Typical End-to-End Flow
+
+```bash
+# 1. Draft a new PEP from a description
+make claude-pep-draft DESC="Add chunked upload support with resumable sessions"
+
+# 2. Research the codebase (optional, for complex PEPs)
+make claude-pep-research PEP=0020
+
+# 3. Refine the plan with deep codebase analysis
+make claude-pep-plan PEP=0020
+
+# 4. Resolve any open design questions (optional)
+make claude-pep-discuss PEP=0020
+
+# 5. Break the plan into granular implementation steps
+make claude-pep-todo PEP=0020
+
+# 6. Preflight check — is the plan ready to implement?
+make claude-pep-preflight PEP=0020
+
+# 7. Implement! (repeatable — picks up where the last session left off)
+make claude-pep-implement PEP=0020
+
+# 8. Review inline notes left during implementation (optional, run anytime)
+make claude-pep-review PEP=0020
+
+# 9. Finalize — update docs, record in LATEST.md, remove PEP directory
+make claude-pep-finalize PEP=0020
+```
+
+#### Prompt Variants
+
+All `claude-pep-*` targets support an optional `PROMPT=variant` parameter to select alternative prompt files. The default prompt is `default.md`. Prompt templates live in `scripts/prompts/pep-<command>/`:
+
+```bash
+# Use the default prompt
+make claude-pep-implement PEP=0020
+
+# Use a custom prompt variant
+make claude-pep-implement PEP=0020 PROMPT=cautious
+```
+
+This loads `scripts/prompts/pep-implement/cautious.md` instead of `scripts/prompts/pep-implement/default.md`.
+
+#### Command Reference
+
+**`make claude-pep-draft DESC="description"`**
+
+Creates a new PEP from scratch. Claude infers an appropriate title from the description, calls `pep-new.sh` to scaffold the directory, then fills in `summary.md` (problem, solution, rationale, acceptance criteria) and `plan.md` (context files, implementation steps, verification commands). The PEP is added to `INDEX.md` automatically.
+
+**`make claude-pep-research PEP=NNNN`**
+
+Performs deep codebase exploration for an existing PEP. Claude reads the summary, explores relevant source files, and creates `research.md` with: current state analysis, key files and functions, technical constraints, pattern analysis, risks, and recommendations. Best used before refining the plan for complex PEPs.
+
+**`make claude-pep-plan PEP=NNNN`**
+
+Refines the PEP's `plan.md` using codebase-grounded analysis. Claude reads the summary, any existing research, and the current plan, then updates implementation steps with specific file paths, code patterns, and verification commands drawn from the actual codebase.
+
+**`make claude-pep-discuss PEP=NNNN`**
+
+Resolves open questions and design tensions. Claude reads all PEP files, identifies ambiguities or trade-offs, and creates/updates `discussions.md` with resolved questions (including rationale) and any remaining open threads.
+
+**`make claude-pep-todo PEP=NNNN`**
+
+Adds granular sub-steps to `plan.md`. Takes existing high-level steps and breaks them into atomic, independently verifiable tasks with specific file paths and verification commands.
+
+**`make claude-pep-preflight PEP=NNNN`**
+
+Validates the plan against the current codebase state. Claude checks that referenced files exist, patterns match expectations, dependencies are met, and the plan is internally consistent. Returns a clear **ready** or **not-ready** verdict with specific issues if not ready.
+
+**`make claude-pep-implement PEP=NNNN`**
+
+Executes unchecked steps in the plan. Claude reads the plan (and journal if it exists), finds the next unchecked step, implements it, runs the verification command, and checks it off. Updates `journal.md` for session resumption. Safe to run multiple times — it picks up where the last session left off.
+
+**`make claude-pep-review PEP=NNNN`**
+
+Scans PEP files and implementation code for `<!-- REVIEW: ... -->` inline notes left during planning or implementation, and resolves them. Can be run at any point in the lifecycle.
+
+**`make claude-pep-finalize PEP=NNNN`**
+
+Closes out a fully implemented PEP. Claude updates all `aikb/` files per the plan's impact map, updates `CLAUDE.md` if needed, adds an entry to `PEPs/IMPLEMENTED/LATEST.md`, removes the PEP row from `INDEX.md`, and deletes the PEP directory.
 
 ### Current Roadmap
 

@@ -1,8 +1,12 @@
 # Doorito
 
-A clean Django 6.0 project skeleton with authentication, a dashboard shell, background task infrastructure, and a structured enhancement proposal workflow — ready to build on.
+An open-source file ingest portal built on Django 6.0 — designed for chunked uploads, batch processing, and reliable event-driven integration with AI runners.
+
+Built on a clean Django skeleton with authentication, a dashboard shell, background task infrastructure, and a structured enhancement proposal workflow.
 
 ## What's Included
+
+### Infrastructure (implemented)
 
 - **Django 6.0** with django-configurations (class-based settings: Dev/Production)
 - **PostgreSQL** (psycopg adapter)
@@ -11,11 +15,28 @@ A clean Django 6.0 project skeleton with authentication, a dashboard shell, back
 - **Tailwind CSS v4** (standalone CLI, no Node.js)
 - **HTMX + Alpine.js** for frontend interactivity
 - **Click CLI** (`doorito` script with example commands)
-- **Docker Compose** (web + db + celery-worker)
+- **Docker Compose** (web + db + celery-worker + celery-beat)
 - **uv** package manager with `.in` → `.txt` lockfile workflow
 - **Ruff + pre-commit** code quality
+- **Event Outbox** — Durable outbox pattern for reliable event emission
+- **Upload Infrastructure** — Upload models (batch, file, session, part) with cleanup tasks
 - **PEPs** — Project Enhancement Proposals for structured development
 - **aikb** — AI knowledge base for Claude Code / AI agent context
+
+### OSS Ingest Portal (roadmap)
+
+The portal pipeline is being developed through a series of PEPs (0008–0019):
+
+- **Canonical Domain Model** — IngestFile, UploadSession, UploadPart, UploadBatch, PortalEventOutbox
+- **Storage Backend Abstraction** — Pluggable local/S3 storage with streaming support
+- **Authentication & API Access** — Session + token-based auth for UI and API
+- **Chunked Upload Pipeline** — Session creation, chunk upload, resume, and finalization
+- **Batch Upload Support** — Group multiple files with progress tracking
+- **Event Schema & Outbox Dispatcher** — Stable `file.uploaded` events with durable delivery to AI runners
+- **Minimal OSS UI** — Upload, file list, batch detail, and event monitoring
+- **Operational Guardrails** — Cleanup jobs, health endpoints, structured logging
+
+See [PEPs/INDEX.md](PEPs/INDEX.md) for the full dependency graph and status.
 
 ## Requirements
 
@@ -71,7 +92,7 @@ docker compose up --build
 docker compose run --rm web manage createsuperuser
 ```
 
-Services: **web** (8000, gunicorn), **db** (PostgreSQL 16), **celery-worker**.
+Services: **web** (8000, gunicorn), **db** (PostgreSQL 16), **celery-worker**, **celery-beat**.
 
 ### Docker Development
 
@@ -99,8 +120,9 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile celery 
 ```
 doorito/
 ├── boot/                   # Django project config (settings, urls, wsgi, asgi, celery)
-├── common/                 # Shared utilities: TimeStampedModel, MoneyField
+├── common/                 # Shared utilities: TimeStampedModel, MoneyField, OutboxEvent, uuid7
 ├── accounts/               # Custom User model (email-based, extends AbstractUser)
+├── uploads/                # Upload infrastructure: models, services, admin, cleanup tasks
 ├── frontend/               # Web UI: auth, dashboard — server-rendered with HTMX + Alpine.js
 ├── aikb/                   # AI knowledge base for agent context (11 files)
 ├── PEPs/                   # Project Enhancement Proposals
@@ -152,17 +174,33 @@ Doorito uses [django-configurations](https://django-configurations.readthedocs.i
 
 Set via `DJANGO_CONFIGURATION` environment variable. See [.env.example](.env.example) for all options.
 
+## URL Structure
+
+| Path | Description |
+|------|-------------|
+| `/healthz/` | Health check endpoint (JSON) |
+| `/admin/` | Django admin |
+| `/app/login/` | Login page |
+| `/app/register/` | Registration page |
+| `/app/logout/` | Logout |
+| `/app/` | Dashboard (requires login) |
+
 ## How to Extend
 
 1. **Add a new app**: `python manage.py startapp myapp`, add to `INSTALLED_APPS` in `boot/settings.py`
 2. **Add models**: Inherit from `common.models.TimeStampedModel` for automatic `created_at`/`updated_at`
 3. **Add views**: Create views in the `frontend` app or a new app, wire up in `urls.py`
 4. **Add Celery tasks**: Follow conventions in `aikb/tasks.md`
-5. **Propose changes**: Use the PEP workflow — `make claude-pep-draft DESC="description"`
+5. **Emit events**: Use `common.services.outbox.emit_event()` for durable event emission
+6. **Propose changes**: Use the PEP workflow — `make claude-pep-draft DESC="description"`
 
 ## PEPs (Project Enhancement Proposals)
 
 All development is tracked through PEPs in the `PEPs/` directory. See [PEPs/ABOUT.md](PEPs/ABOUT.md) for the full workflow, and [CLAUDE.md](CLAUDE.md) for AI agent instructions.
+
+### Current Roadmap
+
+The OSS Ingest Portal pipeline (PEPs 0008–0019) is the primary development focus. These PEPs form a dependency chain starting from the canonical domain model through to the complete upload, event, and UI layers. See [PEPs/INDEX.md](PEPs/INDEX.md) for status and the full dependency graph.
 
 ## License
 

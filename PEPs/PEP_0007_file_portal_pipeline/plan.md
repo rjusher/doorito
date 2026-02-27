@@ -13,27 +13,24 @@
 Read these files before implementation to understand existing patterns and the code being extended:
 
 **Architecture & Conventions:**
-- `aikb/models.md` §OutboxEvent — OutboxEvent fields (`attempts`, `max_attempts`, `next_attempt_at`, `error_message`), status lifecycle, partial index, unique constraint on `(event_type, idempotency_key)`
-- `aikb/models.md` §Uploads App — UploadBatch, UploadFile models (status choices, FileField at `uploads/%Y/%m/`, FK relationships)
-- `aikb/services.md` §common/services/outbox.py — `emit_event()` transactional usage pattern, `process_pending_events()` current placeholder behavior
-- `aikb/services.md` §uploads/services/uploads.py — `create_upload_file()`, `create_batch()`, `finalize_batch()`, `validate_file()` signatures
-- `aikb/tasks.md` §Task Conventions — `@shared_task(bind=True)` pattern, lazy imports, structured return dicts
-- `aikb/tasks.md` §Current Schedule — existing celery-beat entries and schedule format
-- `aikb/admin.md` §common/admin.py — `OutboxEventAdmin` pattern (`list_display`, `list_filter`, `readonly_fields`, `date_hierarchy`, custom actions)
-- `aikb/conventions.md` §Frontend Patterns — template hierarchy, HTMX/Alpine.js usage, `@frontend_login_required`
-- `aikb/dependencies.md` — `.in` → `.txt` compile pattern with `uv`, current dependency list
+- `aikb/models.md` — OutboxEvent fields, status lifecycle, partial index, unique constraint `(event_type, idempotency_key)`. UploadBatch/UploadFile models, status choices, FileField at `uploads/%Y/%m/`.
+- `aikb/services.md` — `emit_event()` transactional usage pattern, `process_pending_events()` placeholder behavior (to be replaced), `create_upload_file()` signature, `create_batch()`, `finalize_batch()`.
+- `aikb/tasks.md` — `@shared_task(bind=True)` pattern, lazy imports, structured return dicts, current celery-beat schedule entries.
+- `aikb/admin.md` — `OutboxEventAdmin` pattern: `list_display`, `list_filter`, `readonly_fields`, `date_hierarchy`, `retry_failed_events` action.
+- `aikb/conventions.md` — Model patterns (TimeStampedModel, uuid7 PK, TextChoices, explicit `db_table`), service layer (plain functions, logging), frontend patterns (`@frontend_login_required`, template block slots).
+- `aikb/dependencies.md` — `.in` → `.txt` compile pattern with `uv`, current dependency list (no `httpx` yet).
 
 **Source Files Being Modified:**
-- `common/models.py` — `OutboxEvent(TimeStampedModel)` at lines 19–67 (pattern for new `WebhookEndpoint` model)
-- `common/services/outbox.py` — `process_pending_events()` at lines 77–120 (the function to be rewritten), `emit_event()` at lines 18–74 (used for `file.stored` and `file.expiring` events)
-- `common/admin.py` — `OutboxEventAdmin` at lines 9–48 (pattern for `WebhookEndpointAdmin`, plus `retry_failed_events` action at lines 40–48 needs fix)
-- `common/tasks.py` — `deliver_outbox_events_task` at lines 10–35 (thin wrapper around `process_pending_events`)
-- `uploads/services/uploads.py` — `create_upload_file()` at lines 76–129 (add `file.stored` event emission)
-- `uploads/tasks.py` — `cleanup_expired_upload_files_task` at lines 15–66 (reference for new task pattern)
-- `frontend/urls.py` — URL patterns at lines 13–20 (add upload route)
-- `frontend/templates/frontend/components/sidebar.html` — desktop nav at lines 27–45, mobile nav at lines 97–104 (add upload link)
-- `boot/settings.py` — `Base` class settings at lines 173–178 (add new setting), `CELERY_BEAT_SCHEDULE` property at lines 147–171 (add new beat entry)
-- `requirements.in` — production dependencies (add `httpx`)
+- `common/models.py` — `OutboxEvent(TimeStampedModel)` at lines 19–67, `DjangoJSONEncoder` already imported at line 3 (pattern for new `WebhookEndpoint` model to be added after line 67)
+- `common/services/outbox.py` — `process_pending_events()` at lines 77–120 (placeholder no-op delivery to be replaced with three-phase HTTP webhook delivery), `emit_event()` at lines 18–78 (used for `file.stored` and `file.expiring` events), `DELIVERY_BATCH_SIZE = 100` at line 14 (to reduce to 20)
+- `common/admin.py` — `OutboxEventAdmin` at lines 9–49 with `retry_failed_events` action (needs `attempts=0` fix), `WebhookEndpoint` import and admin class to be added after line 49
+- `common/tasks.py` — `deliver_outbox_events_task` at lines 10–37 (logging update for new return fields `delivered`/`failed`), stale docstring at lines 17–24
+- `uploads/services/uploads.py` — `create_upload_file()` at lines 79–146 (wrap success path in `transaction.atomic()` + `emit_event()`), add `notify_expiring_files()` after `finalize_batch()` (after line 271)
+- `uploads/tasks.py` — add `notify_expiring_files_task` after `cleanup_expired_upload_files_task` (after line 66)
+- `frontend/urls.py` — URL patterns at lines 13–22 (add upload route)
+- `frontend/templates/frontend/components/sidebar.html` — desktop nav at lines 27–44, mobile nav at lines 96–107 (add upload links)
+- `boot/settings.py` — `Base` class: `FILE_UPLOAD_ALLOWED_TYPES` at line 207–209 (add `FILE_UPLOAD_EXPIRY_NOTIFY_HOURS` after), `CELERY_BEAT_SCHEDULE` property at lines 147–176 (add new beat entry)
+- `requirements.in` — production dependencies (add `httpx>=0.27` after django-htmx at line 32)
 
 **Source Files for Reference (Patterns to Follow):**
 - `frontend/views/dashboard.py` — view pattern: `@frontend_login_required`, simple render
@@ -46,25 +43,30 @@ Read these files before implementation to understand existing patterns and the c
 - `common/utils.py` — `uuid7()` at lines 12–18, `safe_dispatch()` at lines 52–72
 
 **Test Files for Patterns:**
-- `conftest.py` — root `user` fixture (lines 6–15)
-- `common/tests/conftest.py` — `make_outbox_event` factory fixture
+- `conftest.py` — root `user` fixture (lines 6–15): `User.objects.create_user("testuser", "test@example.com", "testpass123")`
+- `common/tests/conftest.py` — `make_outbox_event` factory fixture (lines 9–40)
 - `common/tests/test_services.py` — test patterns: `@pytest.mark.django_db`, test class structure, `OutboxEvent` assertions
+- `common/tests/test_models.py` — test patterns: model creation, `__str__`, default values, constraints
 - `uploads/tests/test_services.py` — test patterns: `SimpleUploadedFile`, `tmp_path`, `settings` override, upload service testing
 
 ## Prerequisites
 
-- [ ] PostgreSQL database is running: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python manage.py check --database default`
-- [ ] Current tests pass: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -m pytest --tb=short -q`
-- [ ] PEP 0004 (Event Outbox Infrastructure) is implemented: `grep -q "process_pending_events" common/services/outbox.py && echo "OK"`
-- [ ] Upload infrastructure exists (PEP 0003): `python -c "import uploads.models; print('OK')"`
+- [ ] PostgreSQL database is running
+  - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python manage.py check --database default`
+- [ ] Current tests pass
+  - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -m pytest --tb=short -q`
+- [ ] PEP 0004 (Event Outbox Infrastructure) is implemented: `OutboxEvent` model and `process_pending_events()` exist
+  - Verify: `grep -q "def process_pending_events" common/services/outbox.py && echo "OK"`
+- [ ] PEP 0003 (Upload Infrastructure) is implemented: upload models and services exist
+  - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -c "from uploads.models import UploadFile, UploadBatch; from uploads.services.uploads import create_upload_file; print('OK')"`
 
 ## Implementation Steps
 
 ### Step 1: Add `httpx` dependency
 
 - [x] **Step 1a**: Add `httpx` to `requirements.in`
-  - Files: `requirements.in` — add new line after the `django-htmx` entry (line 32)
-  - Details: Add `httpx>=0.27` as a new section. This is used for webhook HTTP delivery in `process_pending_events()`.
+  - Files: `requirements.in` — add after the `django-htmx>=1.19` line (line 32)
+  - Details: Add `httpx>=0.27` for synchronous HTTP webhook delivery in `process_pending_events()`.
   - Content to add:
     ```
     # HTTP client (webhook delivery)
@@ -74,7 +76,7 @@ Read these files before implementation to understand existing patterns and the c
 
 - [x] **Step 1b**: Compile lockfiles and install
   - Files: `requirements.txt` (generated), `requirements-dev.txt` (generated)
-  - Details: Run the standard `uv pip compile` workflow with `--generate-hashes`:
+  - Details: Run the standard `uv pip compile` workflow:
     ```bash
     source ~/.virtualenvs/inventlily-d22a143/bin/activate
     uv pip compile --generate-hashes requirements.in -o requirements.txt
@@ -87,52 +89,20 @@ Read these files before implementation to understand existing patterns and the c
 
 - [x] **Step 2a**: Add `WebhookEndpoint` model to `common/models.py`
   - Files: `common/models.py` — add new model class after `OutboxEvent` (after line 67)
-  - Details: Follow the `OutboxEvent` pattern: inherit from `TimeStampedModel`, use `uuid7` PK, `TextChoices` for any enums, explicit `db_table`, `Meta` with `verbose_name`/`ordering`, `__str__`. The model stores webhook destination configuration.
-  - Model definition:
-    ```python
-    class WebhookEndpoint(TimeStampedModel):
-        """Configured webhook destination for outbox event delivery.
-
-        Events are delivered via HTTP POST to active endpoints whose
-        event_types match the event's event_type. An empty event_types
-        list matches all events (catch-all).
-        """
-
-        id = models.UUIDField(primary_key=True, default=uuid7, editable=False)
-        url = models.URLField(max_length=2048, help_text="Target URL to POST events to")
-        secret = models.CharField(
-            max_length=255,
-            help_text="Shared secret for HMAC-SHA256 request signing",
-        )
-        event_types = models.JSONField(
-            default=list,
-            blank=True,
-            encoder=DjangoJSONEncoder,
-            help_text=(
-                'JSON list of event types to subscribe to (e.g., ["file.stored"]). '
-                "Empty list matches all events."
-            ),
-        )
-        is_active = models.BooleanField(
-            default=True,
-            help_text="Enable or disable delivery to this endpoint",
-        )
-
-        class Meta:
-            db_table = "webhook_endpoint"
-            verbose_name = "webhook endpoint"
-            verbose_name_plural = "webhook endpoints"
-            ordering = ["-created_at"]
-
-        def __str__(self):
-            status = "active" if self.is_active else "inactive"
-            return f"{self.url} ({status})"
-    ```
+  - Details: Follow the `OutboxEvent` pattern: inherit `TimeStampedModel`, `uuid7` PK, `DjangoJSONEncoder` for JSONField (already imported at line 3), explicit `db_table`, `Meta` with `verbose_name`/`ordering`, `__str__`. The model stores webhook destination configuration for outbox event delivery. No FK relationships — standalone configuration model.
+  - Fields:
+    - `id` — UUIDField (PK, default=uuid7)
+    - `url` — URLField (max_length=2048) — target URL to POST events to
+    - `secret` — CharField (max_length=255) — HMAC-SHA256 signing key (stored plaintext per industry standard — see discussions.md)
+    - `event_types` — JSONField (default=list, blank=True, encoder=DjangoJSONEncoder) — list of event types to subscribe to; empty `[]` = catch-all
+    - `is_active` — BooleanField (default=True) — toggle delivery on/off
+  - Meta: `db_table = "webhook_endpoint"`, `ordering = ["-created_at"]`
+  - `__str__`: `f"{self.url} (active|inactive)"`
   - Verify: `grep -q "class WebhookEndpoint" common/models.py && echo "OK"`
 
 - [x] **Step 2b**: Create and apply migration
   - Files: `common/migrations/0002_webhookendpoint.py` (new, auto-generated)
-  - Details: Run `makemigrations` and `migrate`:
+  - Details:
     ```bash
     source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python manage.py makemigrations common
     source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python manage.py migrate
@@ -142,982 +112,340 @@ Read these files before implementation to understand existing patterns and the c
 ### Step 3: Add `WebhookEndpointAdmin`
 
 - [x] **Step 3**: Register admin class in `common/admin.py`
-  - Files: `common/admin.py` — add new admin class after `OutboxEventAdmin` (after line 48), add `WebhookEndpoint` to imports at line 6
-  - Details: Follow the `OutboxEventAdmin` pattern. Key fields for `list_display`: `url`, `is_active`, `event_types`, `created_at`. Add filtering by `is_active`. Make `id`, `created_at`, `updated_at` read-only.
+  - Files: `common/admin.py` — update import at line 6 to include `WebhookEndpoint`, add admin class after `OutboxEventAdmin` (after line 49)
+  - Details: Follow `OutboxEventAdmin` pattern. Import: `from common.models import OutboxEvent, WebhookEndpoint`.
   - Admin class:
-    ```python
-    @admin.register(WebhookEndpoint)
-    class WebhookEndpointAdmin(admin.ModelAdmin):
-        """Admin interface for webhook endpoint configuration."""
-
-        list_display = ("url", "is_active", "event_types", "created_at")
-        list_filter = ("is_active", "created_at")
-        search_fields = ("url",)
-        readonly_fields = ("pk", "created_at", "updated_at")
-        date_hierarchy = "created_at"
-    ```
-  - Update import at line 6: `from common.models import OutboxEvent, WebhookEndpoint`
-  - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -c "from django.contrib import admin; admin.autodiscover(); print('WebhookEndpoint' in [m.__name__ for m in admin.site._registry])" | grep -q "True" && echo "OK"`
+    - `list_display`: `("url", "is_active", "event_types", "created_at")`
+    - `list_filter`: `("is_active", "created_at")`
+    - `search_fields`: `("url",)`
+    - `readonly_fields`: `("pk", "created_at", "updated_at")`
+    - `date_hierarchy`: `"created_at"`
+  - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -c "from django.contrib import admin; admin.autodiscover(); from common.models import WebhookEndpoint; assert WebhookEndpoint in admin.site._registry; print('OK')"`
 
 ### Step 4: Create webhook delivery service
 
 - [x] **Step 4**: Create `common/services/webhook.py` (new file)
   - Files: `common/services/webhook.py` — new file
-  - Details: Contains two functions: `compute_signature()` for HMAC-SHA256 signing and `deliver_to_endpoint()` for HTTP POST delivery. Uses synchronous `httpx.Client`. Follows the service layer pattern (plain functions, logging, structured returns). This service is called by the rewritten `process_pending_events()`.
-  - Service functions:
-    ```python
-    """Webhook delivery service for outbox events."""
-
-    import hashlib
-    import hmac
-    import json
-    import logging
-
-    import httpx
-
-    logger = logging.getLogger(__name__)
-
-    WEBHOOK_TIMEOUT = httpx.Timeout(connect=10.0, read=30.0)
-
-
-    def compute_signature(payload_bytes, secret):
-        """Compute HMAC-SHA256 signature for webhook payload.
-
-        Args:
-            payload_bytes: The raw bytes of the JSON payload.
-            secret: The shared secret string.
-
-        Returns:
-            Hex-encoded HMAC-SHA256 signature string.
-        """
-        return hmac.new(
-            secret.encode("utf-8"), payload_bytes, hashlib.sha256
-        ).hexdigest()
-
-
-    def deliver_to_endpoint(client, endpoint, event):
-        """Deliver an outbox event to a single webhook endpoint.
-
-        Posts the event payload as JSON with HMAC signature and
-        metadata headers.
-
-        Args:
-            client: An httpx.Client instance (for connection pooling).
-            endpoint: A WebhookEndpoint instance.
-            event: An OutboxEvent instance.
-
-        Returns:
-            dict: {"ok": bool, "status_code": int|None, "error": str}
-        """
-        payload_bytes = json.dumps(event.payload, default=str).encode("utf-8")
-        signature = compute_signature(payload_bytes, endpoint.secret)
-
-        headers = {
-            "Content-Type": "application/json",
-            "X-Webhook-Signature": signature,
-            "X-Webhook-Event": event.event_type,
-            "X-Webhook-Delivery": str(event.pk),
-        }
-
-        try:
-            response = client.post(
-                str(endpoint.url), content=payload_bytes, headers=headers
-            )
-            response.raise_for_status()
-            logger.info(
-                "Webhook delivered: event=%s endpoint=%s status=%d",
-                event.pk,
-                endpoint.url,
-                response.status_code,
-            )
-            return {"ok": True, "status_code": response.status_code, "error": ""}
-        except httpx.HTTPStatusError as exc:
-            error = f"HTTP {exc.response.status_code}: {exc.response.text[:200]}"
-            logger.warning(
-                "Webhook HTTP error: event=%s endpoint=%s error=%s",
-                event.pk,
-                endpoint.url,
-                error,
-            )
-            return {"ok": False, "status_code": exc.response.status_code, "error": error}
-        except httpx.RequestError as exc:
-            error = f"{type(exc).__name__}: {exc}"
-            logger.warning(
-                "Webhook request error: event=%s endpoint=%s error=%s",
-                event.pk,
-                endpoint.url,
-                error,
-            )
-            return {"ok": False, "status_code": None, "error": error}
-    ```
+  - Details: Two functions for webhook HTTP delivery. Uses synchronous `httpx.Client` (passed in by caller for connection pooling). Follows service layer convention: plain functions, logging, structured return dicts. Called by the rewritten `process_pending_events()` in `common/services/outbox.py`.
+  - Functions:
+    - `compute_signature(payload_bytes: bytes, secret: str) -> str` — HMAC-SHA256 hex digest using `hmac.new(secret.encode("utf-8"), payload_bytes, hashlib.sha256).hexdigest()`
+    - `deliver_to_endpoint(client: httpx.Client, endpoint: WebhookEndpoint, event: OutboxEvent) -> dict` — Serializes `event.payload` to JSON bytes, computes HMAC signature, POSTs to `endpoint.url` with headers: `Content-Type: application/json`, `X-Webhook-Signature: {signature}`, `X-Webhook-Event: {event.event_type}`, `X-Webhook-Delivery: {event.pk}`. Returns `{"ok": bool, "status_code": int|None, "error": str}`. Handles `httpx.HTTPStatusError` (4xx/5xx) and `httpx.RequestError` (network errors/timeouts).
+  - Note: A `WEBHOOK_TIMEOUT` constant is defined in this file but is dead code — the canonical timeout lives in `common/services/outbox.py` where `httpx.Client` is instantiated. This should be removed during finalization (see discussions.md open thread).
   - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && python -c "from common.services.webhook import compute_signature, deliver_to_endpoint; print('OK')"`
 
 ### Step 5: Rewrite `process_pending_events()` with real webhook delivery
 
 - [x] **Step 5**: Rewrite `process_pending_events()` in `common/services/outbox.py`
-  - Files: `common/services/outbox.py` — replace `process_pending_events()` at lines 77–120, update `DELIVERY_BATCH_SIZE` at line 14
-  - Details: Replace the placeholder no-op delivery with a three-phase approach (per discussions.md design decision):
-    1. **Fetch phase** (`transaction.atomic` + `select_for_update`): Lock and fetch pending events. Release locks after collecting PKs and data.
-    2. **Delivery phase** (no transaction): For each event, find matching `WebhookEndpoint` records, POST to each using the webhook service, collect results. Use a shared `httpx.Client` for connection pooling within the batch.
-    3. **Update phase** (`transaction.atomic`): Update each event's status based on delivery results — DELIVERED if all endpoints succeeded (or no matching endpoints), retry with backoff if any failed, FAILED if `attempts >= max_attempts`.
-
-    Key changes:
-    - Reduce `DELIVERY_BATCH_SIZE` from 100 to 20 (per discussions.md Q3 resolution)
-    - Add exponential backoff: `delay = min(60 * (2 ** attempts), 3600)` with 10% jitter
-    - Increment `event.attempts` on each delivery attempt
-    - Set `event.error_message` on failure
-    - Transition to FAILED when `attempts >= max_attempts`
-    - Events with no matching active endpoints are marked DELIVERED (no-op, per acceptance criteria)
-    - HTTP calls happen OUTSIDE `select_for_update` to avoid holding row locks during network I/O
-    - Handle `SoftTimeLimitExceeded` for early exit (save progress, return)
-
-  - Updated imports at top of file (add after line 5):
-    ```python
-    import random
-
-    import httpx
-    from celery.exceptions import SoftTimeLimitExceeded
-    ```
-  - Updated constant (line 14):
-    ```python
-    DELIVERY_BATCH_SIZE = 20
-    ```
-  - Rewritten function:
-    ```python
-    def process_pending_events(batch_size=DELIVERY_BATCH_SIZE):
-        """Process pending outbox events via webhook delivery.
-
-        Three-phase approach to avoid holding row locks during HTTP I/O:
-        1. Fetch: lock and collect pending events
-        2. Deliver: POST to matching webhook endpoints (no DB locks)
-        3. Update: write delivery results back to the database
-
-        Events with no matching active endpoints are marked DELIVERED.
-        On delivery failure, events are retried with exponential backoff.
-        Events exceeding max_attempts are marked FAILED.
-
-        Args:
-            batch_size: Maximum events to process per call.
-
-        Returns:
-            dict: {"processed": int, "delivered": int, "failed": int, "remaining": int}
-        """
-        from common.models import WebhookEndpoint
-
-        now = timezone.now()
-
-        # Phase 1: Fetch pending events (short transaction, releases locks)
-        with transaction.atomic():
-            events = list(
-                OutboxEvent.objects.filter(
-                    status=OutboxEvent.Status.PENDING,
-                    next_attempt_at__lte=now,
-                ).select_for_update(skip_locked=True)[:batch_size]
-            )
-
-        if not events:
-            remaining = OutboxEvent.objects.filter(
-                status=OutboxEvent.Status.PENDING,
-            ).count()
-            return {"processed": 0, "delivered": 0, "failed": 0, "remaining": remaining}
-
-        # Load active endpoints once for the batch
-        endpoints = list(WebhookEndpoint.objects.filter(is_active=True))
-
-        # Phase 2: Deliver (no transaction, no locks)
-        results = {}  # event.pk -> {"all_ok": bool, "error": str}
-        try:
-            with httpx.Client(timeout=WEBHOOK_TIMEOUT) as client:
-                for event in events:
-                    matching = [
-                        ep for ep in endpoints
-                        if not ep.event_types or event.event_type in ep.event_types
-                    ]
-
-                    if not matching:
-                        # No matching endpoints — mark as delivered (no-op)
-                        results[event.pk] = {"all_ok": True, "error": ""}
-                        continue
-
-                    from common.services.webhook import deliver_to_endpoint
-
-                    errors = []
-                    for ep in matching:
-                        result = deliver_to_endpoint(client, ep, event)
-                        if not result["ok"]:
-                            errors.append(f"{ep.url}: {result['error']}")
-
-                    results[event.pk] = {
-                        "all_ok": len(errors) == 0,
-                        "error": "; ".join(errors),
-                    }
-        except SoftTimeLimitExceeded:
-            logger.warning(
-                "Soft time limit reached during webhook delivery, "
-                "saving progress for %d/%d events.",
-                len(results),
-                len(events),
-            )
-
-        # Phase 3: Update event statuses (short transaction)
-        delivered_count = 0
-        failed_count = 0
-        now = timezone.now()
-
-        with transaction.atomic():
-            for event in events:
-                if event.pk not in results:
-                    # Not processed (soft time limit hit) — skip, will retry next sweep
-                    continue
-
-                r = results[event.pk]
-                event.attempts += 1
-
-                if r["all_ok"]:
-                    event.status = OutboxEvent.Status.DELIVERED
-                    event.delivered_at = now
-                    event.next_attempt_at = None
-                    event.error_message = ""
-                    delivered_count += 1
-                elif event.attempts >= event.max_attempts:
-                    event.status = OutboxEvent.Status.FAILED
-                    event.next_attempt_at = None
-                    event.error_message = r["error"]
-                    failed_count += 1
-                else:
-                    # Retry with exponential backoff + jitter
-                    delay = min(60 * (2 ** (event.attempts - 1)), 3600)
-                    jitter = random.uniform(0, delay * 0.1)  # noqa: S311
-                    event.next_attempt_at = now + timedelta(seconds=delay + jitter)
-                    event.error_message = r["error"]
-
-                event.save(
-                    update_fields=[
-                        "status",
-                        "attempts",
-                        "delivered_at",
-                        "next_attempt_at",
-                        "error_message",
-                        "updated_at",
-                    ]
-                )
-
-        remaining = OutboxEvent.objects.filter(
-            status=OutboxEvent.Status.PENDING,
-        ).count()
-
-        return {
-            "processed": len(results),
-            "delivered": delivered_count,
-            "failed": failed_count,
-            "remaining": remaining,
-        }
-    ```
-  - Also add at the module level (after `CLEANUP_BATCH_SIZE` line 15):
-    ```python
-    WEBHOOK_TIMEOUT = httpx.Timeout(connect=10.0, read=30.0)
-    ```
-  - Note: The return format changes from `{"processed", "remaining"}` to `{"processed", "delivered", "failed", "remaining"}`. Update `deliver_outbox_events_task` in `common/tasks.py` to log the new fields.
-  - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && python -c "from common.services.outbox import process_pending_events; print('OK')"`
+  - Files: `common/services/outbox.py` — replace `process_pending_events()` (was lines 77–120), update imports (add `random`, `httpx`, `SoftTimeLimitExceeded`), change `DELIVERY_BATCH_SIZE` from 100 to 20, add `WEBHOOK_TIMEOUT = httpx.Timeout(30.0, connect=10.0)` constant
+  - Details: Replace placeholder no-op delivery with three-phase approach (per discussions.md design decisions Q2, Q3, Q8):
+    1. **Phase 1 — Fetch** (`transaction.atomic` + `select_for_update(skip_locked=True)`): Lock and fetch up to `batch_size` pending events where `next_attempt_at <= now`. Transaction commits, releasing locks. Also loads all active `WebhookEndpoint` records once for the batch.
+    2. **Phase 2 — Deliver** (no transaction, no locks): Create shared `httpx.Client(timeout=WEBHOOK_TIMEOUT)` via context manager. For each event, find matching endpoints (`not ep.event_types or event.event_type in ep.event_types` — exact match, empty list = catch-all). Events with no matching endpoints → `all_ok=True`. Otherwise, call `deliver_to_endpoint()` for each matching endpoint, collect errors. Catch `SoftTimeLimitExceeded` to save progress and exit gracefully.
+    3. **Phase 3 — Update** (`transaction.atomic`): For each processed event, increment `attempts`. If `all_ok` → DELIVERED + set `delivered_at`. If `attempts >= max_attempts` → FAILED. Otherwise → retry with exponential backoff: `delay = min(60 * (2 ** (attempts - 1)), 3600)` + 10% jitter via `random.uniform(0, delay * 0.1)`. Save via `update_fields`.
+  - Return format changes from `{"processed", "remaining"}` to `{"processed", "delivered", "failed", "remaining"}`.
+  - Key behavioral changes:
+    - Batch size 20 (was 100) — worst case with slow endpoints stays within CELERY_TASK_SOFT_TIME_LIMIT (240s)
+    - HTTP calls happen outside `select_for_update` to avoid holding row locks during network I/O
+    - Events with no matching active endpoints are marked DELIVERED (no-op, not an error)
+    - `SoftTimeLimitExceeded` handler saves progress for processed events, skips unprocessed
+  - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && python -c "from common.services.outbox import process_pending_events, DELIVERY_BATCH_SIZE; assert DELIVERY_BATCH_SIZE == 20; print('OK')"`
 
 ### Step 6: Update `deliver_outbox_events_task` logging
 
-- [x] **Step 6**: Update task to log new return fields
-  - Files: `common/tasks.py` — modify `deliver_outbox_events_task` at lines 28–34
-  - Details: Update the logging to include `delivered` and `failed` counts from the new return format.
-  - Updated logging:
-    ```python
-    if result["processed"] > 0:
-        logger.info(
-            "Processed %d outbox events: %d delivered, %d failed, %d remaining.",
-            result["processed"],
-            result["delivered"],
-            result["failed"],
-            result["remaining"],
-        )
-    ```
+- [x] **Step 6**: Update task logging for new return fields
+  - Files: `common/tasks.py` — modify `deliver_outbox_events_task` logging at lines 29–36
+  - Details: Update the `logger.info` call to include `delivered` and `failed` counts from the new return format. The log format becomes: `"Processed %d outbox events: %d delivered, %d failed, %d remaining."`.
+  - Also note: The docstring at lines 17–24 is stale (says batch size 100, old return format). Update docstring to reflect batch size 20 and `{"processed", "delivered", "failed", "remaining"}` return format. (See discussions.md open thread.)
   - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && python -c "from common.tasks import deliver_outbox_events_task; print('OK')"`
 
 ### Step 7: Fix `retry_failed_events` admin action
 
 - [x] **Step 7**: Reset `attempts=0` in `retry_failed_events` action
-  - Files: `common/admin.py` — modify `retry_failed_events` at lines 40–48
-  - Details: Per discussions.md design decision, the admin retry action must reset `attempts=0` alongside existing field resets. Without this, a retried event at `max_attempts=5` would immediately re-fail because `process_pending_events()` now checks `attempts >= max_attempts`.
-  - Updated `.update()` call:
-    ```python
-    updated = queryset.filter(status=OutboxEvent.Status.FAILED).update(
-        status=OutboxEvent.Status.PENDING,
-        next_attempt_at=timezone.now(),
-        error_message="",
-        attempts=0,
-    )
-    ```
+  - Files: `common/admin.py` — modify `retry_failed_events` `.update()` call (line 43–48)
+  - Details: Per discussions.md design decision: the admin retry action must reset `attempts=0` alongside existing resets (`status=PENDING`, `next_attempt_at=now()`, `error_message=""`). Without this, a retried event at `max_attempts=5` would immediately re-fail because `process_pending_events()` now checks `attempts >= max_attempts`.
   - Verify: `grep -A 5 "retry_failed_events" common/admin.py | grep "attempts=0"`
 
 ### Step 8: Add `file.stored` event emission to `create_upload_file`
 
 - [x] **Step 8**: Emit `file.stored` outbox event on successful upload
-  - Files: `uploads/services/uploads.py` — modify `create_upload_file()` at lines 76–129
-  - Details: Since PEP 0006 is not yet implemented, PEP 0007 includes the `file.stored` event emission. Wrap the successful `UploadFile.objects.create(...)` call and `emit_event()` in `transaction.atomic()` following the pattern documented in `common/services/outbox.py` lines 28–32. Only emit for successful uploads (status=STORED), not failed ones. The event payload includes `file_id`, `original_filename`, `content_type`, `size_bytes`, `sha256`, and `url`.
-  - Add import at top of file (after existing `from django.db import transaction` at line 10):
-    ```python
-    from common.services.outbox import emit_event
-    ```
-    Note: `transaction` is already imported at line 10.
-  - Modify the success path (lines 109–128) to:
-    ```python
-    sha256 = compute_sha256(file)
-
-    with transaction.atomic():
-        upload = UploadFile.objects.create(
-            uploaded_by=user,
-            file=file,
-            original_filename=file.name,
-            content_type=content_type,
-            size_bytes=size_bytes,
-            sha256=sha256,
-            batch=batch,
-            status=UploadFile.Status.STORED,
-        )
-        emit_event(
-            aggregate_type="UploadFile",
-            aggregate_id=str(upload.pk),
-            event_type="file.stored",
-            payload={
-                "file_id": str(upload.pk),
-                "original_filename": upload.original_filename,
-                "content_type": upload.content_type,
-                "size_bytes": upload.size_bytes,
-                "sha256": upload.sha256,
-                "url": upload.file.url,
-            },
-        )
-    ```
-  - The `idempotency_key` defaults to `"UploadFile:{pk}"` via `emit_event`'s auto-generation (see `common/services/outbox.py` line 47).
+  - Files: `uploads/services/uploads.py` — modify `create_upload_file()` at lines 79–146
+  - Details: Add `from common.services.outbox import emit_event` import. Wrap the successful `UploadFile.objects.create(status=STORED)` and `emit_event()` in `transaction.atomic()` following the transactional pattern documented in `common/services/outbox.py` lines 28–37. Only emit for successful uploads (status=STORED), not failed ones. The event payload includes: `file_id`, `original_filename`, `content_type`, `size_bytes`, `sha256`, `url` (from `upload.file.url` — local path in Dev, S3 URL in Production).
+  - The `idempotency_key` auto-generates as `"UploadFile:{pk}"` via `emit_event()`'s default logic at `common/services/outbox.py:51`.
   - Verify: `grep -A 20 "def create_upload_file" uploads/services/uploads.py | grep "emit_event"` and `grep "from common.services.outbox import emit_event" uploads/services/uploads.py`
 
 ### Step 9: Create upload view
 
 - [x] **Step 9**: Create `frontend/views/upload.py` (new file)
   - Files: `frontend/views/upload.py` — new file
-  - Details: Follow the patterns from `frontend/views/dashboard.py` (simple `@frontend_login_required` view) and `frontend/views/auth.py` (GET/POST handling with `@require_http_methods`). The view handles:
-    - **GET**: Render the upload form page
-    - **POST**: Process uploaded files via `request.FILES.getlist("files")`, delegate to `create_batch()` + `create_upload_file()` + `finalize_batch()`, return results
-    - **HTMX detection**: Use `request.htmx` (from `django-htmx` middleware) to return either an HTML fragment (HTMX) or redirect with messages (standard POST)
-    - **Max files guard**: Reject requests with more than 10 files (constant `MAX_FILES_PER_REQUEST = 10`)
-  - View implementation:
-    ```python
-    """Upload view for the frontend app."""
-
-    import logging
-
-    from django.contrib import messages
-    from django.shortcuts import redirect, render
-    from django.views.decorators.http import require_http_methods
-
-    from frontend.decorators import frontend_login_required
-    from uploads.services.uploads import create_batch, create_upload_file, finalize_batch
-
-    logger = logging.getLogger(__name__)
-
-    MAX_FILES_PER_REQUEST = 10
-
-
-    @frontend_login_required
-    @require_http_methods(["GET", "POST"])
-    def upload_view(request):
-        """Upload page with drag-and-drop file upload interface."""
-        if request.method == "GET":
-            return render(request, "frontend/upload/index.html")
-
-        # POST: process uploaded files
-        files = request.FILES.getlist("files")
-
-        if not files:
-            error = "No files selected."
-            if request.htmx:
-                return render(
-                    request,
-                    "frontend/upload/partials/results.html",
-                    {"error": error},
-                )
-            messages.error(request, error)
-            return redirect("frontend:upload")
-
-        if len(files) > MAX_FILES_PER_REQUEST:
-            error = f"Too many files. Maximum {MAX_FILES_PER_REQUEST} files per upload."
-            if request.htmx:
-                return render(
-                    request,
-                    "frontend/upload/partials/results.html",
-                    {"error": error},
-                )
-            messages.error(request, error)
-            return redirect("frontend:upload")
-
-        batch = create_batch(request.user)
-        results = []
-        for f in files:
-            upload = create_upload_file(request.user, f, batch=batch)
-            results.append(upload)
-        finalize_batch(batch)
-
-        stored_count = sum(1 for r in results if r.status == "stored")
-        failed_count = sum(1 for r in results if r.status == "failed")
-
-        if request.htmx:
-            return render(
-                request,
-                "frontend/upload/partials/results.html",
-                {
-                    "results": results,
-                    "batch": batch,
-                    "stored_count": stored_count,
-                    "failed_count": failed_count,
-                },
-            )
-
-        if failed_count == 0:
-            messages.success(request, f"Uploaded {stored_count} file(s) successfully.")
-        elif stored_count > 0:
-            messages.warning(
-                request,
-                f"Uploaded {stored_count} file(s), {failed_count} failed.",
-            )
-        else:
-            messages.error(request, f"All {failed_count} file(s) failed to upload.")
-
-        return redirect("frontend:upload")
-    ```
+  - Details: Follow patterns from `frontend/views/dashboard.py` (`@frontend_login_required`) and `frontend/views/auth.py` (GET/POST with `@require_http_methods`). Uses `request.htmx` from `django-htmx` middleware (already in `MIDDLEWARE` at `boot/settings.py:46`).
+  - Function: `upload_view(request) -> HttpResponse`
+    - Decorators: `@frontend_login_required`, `@require_http_methods(["GET", "POST"])`
+    - **GET**: Render `frontend/upload/index.html`
+    - **POST**: Process `request.FILES.getlist("files")`
+      - No files → error (HTMX partial or redirect with `messages.error`)
+      - `> MAX_FILES_PER_REQUEST (10)` → error
+      - Otherwise: `create_batch(request.user)` → `create_upload_file(request.user, f, batch=batch)` per file → `finalize_batch(batch)`
+      - Count results using `UploadFile.Status.STORED` / `UploadFile.Status.FAILED` enum comparison
+      - **HTMX response**: render `frontend/upload/partials/results.html` with `results`, `batch`, `stored_count`, `failed_count`
+      - **Standard response**: redirect to `frontend:upload` with Django messages (success/warning/error based on counts)
+  - Imports: `logging`, `django.contrib.messages`, `django.shortcuts.redirect/render`, `django.views.decorators.http.require_http_methods`, `uploads.models.UploadFile`, `uploads.services.uploads.create_batch/create_upload_file/finalize_batch`, `frontend.decorators.frontend_login_required`
   - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && python -c "from frontend.views.upload import upload_view; print('OK')"`
 
 ### Step 10: Add upload URL route
 
 - [x] **Step 10**: Add `/app/upload/` route to `frontend/urls.py`
-  - Files: `frontend/urls.py` — add upload import at line 9, add URL pattern after line 19
-  - Details: Import the upload view module and add the URL pattern following the existing convention.
-  - Updated imports (line 9):
-    ```python
-    from frontend.views import auth, dashboard, upload
-    ```
-  - Add URL pattern (after dashboard line 19):
-    ```python
-    # Upload
-    path("upload/", upload.upload_view, name="upload"),
-    ```
-  - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -c "from django.urls import reverse; print(reverse('frontend:upload'))"`
+  - Files: `frontend/urls.py` — update import at line 9 to add `upload`, add URL pattern after dashboard (after line 19)
+  - Details:
+    - Import: `from frontend.views import auth, dashboard, upload`
+    - URL pattern: `path("upload/", upload.upload_view, name="upload")`
+  - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -c "from django.urls import reverse; assert reverse('frontend:upload') == '/app/upload/'; print('OK')"`
 
-### Step 11: Create upload page template
+### Step 11: Create upload page templates
 
 - [x] **Step 11a**: Create `frontend/templates/frontend/upload/index.html` (new file)
-  - Files: `frontend/templates/frontend/upload/index.html` — new file
-  - Details: Extends `frontend/base.html` following the `dashboard/index.html` pattern. Implements a drag-and-drop upload zone using Alpine.js for client-side state (drag events, file list preview) and HTMX for form submission. Includes a `{% csrf_token %}` inside the form for non-JS fallback. The form uses `enctype="multipart/form-data"` with `<input type="file" name="files" multiple>`. HTMX posts to the same URL and swaps the results into a target `div`. Non-JS fallback uses a standard form POST.
-  - Template structure:
-    ```html
-    {% extends "frontend/base.html" %}
-
-    {% block page_title %}Upload — Doorito{% endblock %}
-    {% block page_header %}Upload Files{% endblock %}
-    {% block sidebar_active %}upload{% endblock %}
-
-    {% block page_content %}
-    <div class="max-w-2xl">
-      <form method="post"
-            enctype="multipart/form-data"
-            hx-post="{% url 'frontend:upload' %}"
-            hx-target="#upload-results"
-            hx-swap="innerHTML"
-            x-data="uploadZone()"
-            class="space-y-6">
-        {% csrf_token %}
-
-        {# Drop zone #}
-        <div @dragover.prevent="dragOver = true"
-             @dragleave.prevent="dragOver = false"
-             @drop.prevent="handleDrop($event)"
-             :class="dragOver ? 'border-primary-500 bg-primary-50' : 'border-neutral-300'"
-             class="border-2 border-dashed rounded-lg p-8 text-center transition-colors cursor-pointer"
-             @click="$refs.fileInput.click()">
-          <input type="file"
-                 name="files"
-                 multiple
-                 x-ref="fileInput"
-                 @change="handleFiles($event)"
-                 class="hidden">
-          <svg class="w-12 h-12 mx-auto text-neutral-400 mb-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5" />
-          </svg>
-          <p class="text-neutral-600">
-            <span class="font-medium text-primary-600">Click to browse</span> or drag and drop
-          </p>
-          <p class="text-sm text-neutral-400 mt-1">Up to 10 files, 50 MB each</p>
-        </div>
-
-        {# Selected files preview #}
-        <div x-show="fileNames.length > 0" x-cloak>
-          <h3 class="text-sm font-medium text-neutral-700 mb-2" x-text="`${fileNames.length} file(s) selected`"></h3>
-          <ul class="space-y-1">
-            <template x-for="name in fileNames" :key="name">
-              <li class="text-sm text-neutral-600 flex items-center gap-2">
-                <svg class="w-4 h-4 text-neutral-400 shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" /></svg>
-                <span x-text="name"></span>
-              </li>
-            </template>
-          </ul>
-        </div>
-
-        {# Submit button #}
-        <button type="submit"
-                x-show="fileNames.length > 0"
-                x-cloak
-                class="bg-primary-600 hover:bg-primary-700 text-white font-medium py-2 px-4 rounded-lg transition-colors">
-          Upload
-        </button>
-      </form>
-
-      {# Results area (swapped by HTMX) #}
-      <div id="upload-results" class="mt-6"></div>
-
-      {% if messages %}
-      <div class="mt-6 space-y-2">
-        {% for message in messages %}
-        <div class="rounded-lg p-4 text-sm
-          {% if message.tags == 'success' %}bg-success-50 text-success-700 border border-success-200
-          {% elif message.tags == 'warning' %}bg-warning-50 text-warning-700 border border-warning-200
-          {% elif message.tags == 'error' %}bg-danger-50 text-danger-700 border border-danger-200
-          {% else %}bg-info-50 text-info-700 border border-info-200{% endif %}">
-          {{ message }}
-        </div>
-        {% endfor %}
-      </div>
-      {% endif %}
-    </div>
-
-    <script>
-      function uploadZone() {
-        return {
-          dragOver: false,
-          fileNames: [],
-          handleDrop(event) {
-            this.dragOver = false;
-            this.$refs.fileInput.files = event.dataTransfer.files;
-            this.updateFileNames();
-          },
-          handleFiles(event) {
-            this.updateFileNames();
-          },
-          updateFileNames() {
-            this.fileNames = Array.from(this.$refs.fileInput.files).map(f => f.name);
-          }
-        }
-      }
-    </script>
-    {% endblock %}
-    ```
+  - Files: `frontend/templates/frontend/upload/index.html` — new file (create directory `frontend/templates/frontend/upload/` first)
+  - Details: Extends `frontend/base.html` following `dashboard/index.html` pattern. Block slots: `page_title` ("Upload — Doorito"), `page_header` ("Upload Files"), `sidebar_active` ("upload"), `page_content`. Implements drag-and-drop upload zone using:
+    - **Alpine.js**: `uploadZone()` component with `dragOver` state, `fileNames` array, `handleDrop(event)` / `handleFiles(event)` / `updateFileNames()` methods
+    - **HTMX**: `<form>` with `hx-post="{% url 'frontend:upload' %}"`, `hx-target="#upload-results"`, `hx-swap="innerHTML"`
+    - **Non-JS fallback**: `<form method="post" enctype="multipart/form-data">` with `{% csrf_token %}`
+    - **File input**: `<input type="file" name="files" multiple>` (hidden, triggered by click/drop)
+    - **Selected files preview**: `x-show="fileNames.length > 0"` list with file icons
+    - **Submit button**: `x-show="fileNames.length > 0"`
+    - **Results area**: `<div id="upload-results">` (HTMX swap target)
+    - **Django messages**: fallback for non-HTMX POST results
+  - Tailwind classes used: `border-dashed`, `border-primary-500`, `bg-primary-50`, `bg-primary-600`, `bg-success-50`, `text-success-700`, `bg-warning-50`, `text-warning-700`, `bg-danger-50`, `text-danger-700`, `x-cloak`
   - Verify: `test -f frontend/templates/frontend/upload/index.html && echo "OK"`
 
 - [x] **Step 11b**: Create `frontend/templates/frontend/upload/partials/results.html` (new file)
-  - Files: `frontend/templates/frontend/upload/partials/results.html` — new file
-  - Details: HTMX partial returned after upload POST. Shows upload results (file list with status indicators) or error message. No `{% extends %}` — this is a fragment swapped into `#upload-results`.
-  - Template:
-    ```html
-    {% if error %}
-    <div class="rounded-lg p-4 text-sm bg-danger-50 text-danger-700 border border-danger-200">
-      {{ error }}
-    </div>
-    {% else %}
-    <div class="rounded-lg border border-neutral-200 bg-white">
-      <div class="px-4 py-3 border-b border-neutral-200">
-        <h3 class="text-sm font-medium text-neutral-900">
-          Upload Results
-          {% if failed_count == 0 %}
-            <span class="ml-2 text-success-600">All {{ stored_count }} file(s) stored</span>
-          {% elif stored_count > 0 %}
-            <span class="ml-2 text-warning-600">{{ stored_count }} stored, {{ failed_count }} failed</span>
-          {% else %}
-            <span class="ml-2 text-danger-600">All {{ failed_count }} file(s) failed</span>
-          {% endif %}
-        </h3>
-      </div>
-      <ul class="divide-y divide-neutral-200">
-        {% for upload in results %}
-        <li class="px-4 py-3 flex items-center justify-between">
-          <div class="flex items-center gap-2 min-w-0">
-            <svg class="w-4 h-4 shrink-0
-              {% if upload.status == 'stored' %}text-success-500
-              {% elif upload.status == 'failed' %}text-danger-500
-              {% else %}text-neutral-400{% endif %}"
-              xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-              {% if upload.status == 'stored' %}
-              <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
-              {% elif upload.status == 'failed' %}
-              <path stroke-linecap="round" stroke-linejoin="round" d="m9.75 9.75 4.5 4.5m0-4.5-4.5 4.5M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
-              {% endif %}
-            </svg>
-            <span class="text-sm text-neutral-700 truncate">{{ upload.original_filename }}</span>
-          </div>
-          <div class="text-xs text-neutral-400 shrink-0 ml-4">
-            {% if upload.status == 'stored' %}
-              {{ upload.size_bytes|filesizeformat }}
-            {% elif upload.status == 'failed' %}
-              <span class="text-danger-500">{{ upload.error_message }}</span>
-            {% endif %}
-          </div>
-        </li>
-        {% endfor %}
-      </ul>
-    </div>
-    {% endif %}
-    ```
+  - Files: `frontend/templates/frontend/upload/partials/results.html` — new file (create `partials/` directory)
+  - Details: HTMX partial (no `{% extends %}`). Two states:
+    - **Error**: `{% if error %}` → danger alert with `{{ error }}`
+    - **Results**: Per-file list with status icons (checkmark for stored, X for failed), filename, file size / error message. Summary header with stored/failed counts. Uses `upload.status == 'stored'` string comparison in templates (Django template tags evaluate TextChoices as strings).
   - Verify: `test -f frontend/templates/frontend/upload/partials/results.html && echo "OK"`
 
 ### Step 12: Add Upload link to sidebar
 
 - [x] **Step 12**: Add Upload navigation link to both desktop and mobile sidebars
-  - Files: `frontend/templates/frontend/components/sidebar.html` — add upload link in desktop nav (after line 35) and mobile nav (after line 103)
-  - Details: Add an Upload nav link following the Dashboard link pattern. Use an upload icon SVG. The active state uses `sidebar_active === 'upload'` matching the `{% block sidebar_active %}upload{% endblock %}` in the upload template.
-  - Desktop nav link (insert after line 35 `</a>`, before line 37 `{# ── Add your navigation links here`):
-    ```html
-    {# Upload #}
-    <a href="{% url 'frontend:upload' %}"
-       class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors"
-       :class="sidebarOpen ? '' : 'justify-center'"
-       :class="'{% block sidebar_active %}{% endblock %}' === 'upload' ? 'bg-neutral-800 text-white' : 'hover:bg-neutral-800 hover:text-white'">
-      <svg class="w-5 h-5 shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5" /></svg>
-      <span x-show="sidebarOpen" x-cloak>Upload</span>
-    </a>
-    ```
-  - Mobile nav link (insert after line 103 `</a>`, before `</nav>`):
-    ```html
-    <a href="{% url 'frontend:upload' %}"
-       class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors hover:bg-neutral-800 hover:text-white">
-      <svg class="w-5 h-5 shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5" /></svg>
-      <span>Upload</span>
-    </a>
-    ```
-  - Note: The sidebar's `:class` binding for active state uses a Django template `{% block sidebar_active %}{% endblock %}` that is evaluated at render time. Only the page that defines `{% block sidebar_active %}upload{% endblock %}` will see the active state. Other pages see an empty string, so the upload link shows the hover style. This is the existing pattern used by the Dashboard link.
-  - Verify: `grep -c "frontend:upload" frontend/templates/frontend/components/sidebar.html` should return `2` (one desktop, one mobile)
+  - Files: `frontend/templates/frontend/components/sidebar.html` — add upload link in desktop nav (after Dashboard link at line 35) and mobile nav (after Dashboard link at line 101)
+  - Details: Upload icon SVG (arrow-up-tray). Desktop link uses active state detection. Mobile link has hover styles only.
+  - Implementation note: The desktop upload link ended up using JavaScript-based `window.location.pathname.startsWith('/app/upload')` instead of the `{% block sidebar_active %}` pattern used by Dashboard. This is a deviation from the plan but works correctly (see discussions.md design decision). The mobile Dashboard link has hardcoded active styles (always appears active) — a cosmetic issue documented in discussions.md.
+  - Verify: `grep -c "frontend:upload" frontend/templates/frontend/components/sidebar.html` should return `2`
 
 ### Step 13: Add `FILE_UPLOAD_EXPIRY_NOTIFY_HOURS` setting
 
 - [x] **Step 13**: Add pre-expiry notification setting to `boot/settings.py`
-  - Files: `boot/settings.py` — add new setting in `Base` class after `FILE_UPLOAD_ALLOWED_TYPES` (after line 178)
-  - Details: Add a setting that controls how many hours before TTL expiry the `file.expiring` notification fires. Default: 1 hour. With `FILE_UPLOAD_TTL_HOURS=24`, files are notified at ~23 hours, deleted at ~24 hours.
-  - Setting to add:
-    ```python
-    FILE_UPLOAD_EXPIRY_NOTIFY_HOURS = 1  # Hours before TTL expiry to emit file.expiring
-    ```
-  - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -c "from django.conf import settings; print(settings.FILE_UPLOAD_EXPIRY_NOTIFY_HOURS)"`
+  - Files: `boot/settings.py` — add new setting in `Base` class after `FILE_UPLOAD_ALLOWED_TYPES` (after line 209)
+  - Details: Controls how many hours before TTL expiry the `file.expiring` notification fires. Default: 1 hour. With `FILE_UPLOAD_TTL_HOURS=24`, files are notified at ~23 hours, deleted at ~24 hours.
+  - Setting: `FILE_UPLOAD_EXPIRY_NOTIFY_HOURS = 1  # Hours before TTL expiry to emit file.expiring`
+  - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -c "from django.conf import settings; assert settings.FILE_UPLOAD_EXPIRY_NOTIFY_HOURS == 1; print('OK')"`
 
 ### Step 14: Create pre-expiry notification service and task
 
-- [x] **Step 14a**: Add `notify_expiring_files()` service function to `uploads/services/uploads.py`
-  - Files: `uploads/services/uploads.py` — add new function after `finalize_batch()` (after line 254)
-  - Details: Query `UploadFile` records with `status=STORED` and `created_at` older than `TTL - NOTIFY_HOURS`. For each matching file, call `emit_event()` with `event_type="file.expiring"`. Catch `IntegrityError` per-file for idempotency (the outbox unique constraint `(event_type, idempotency_key)` prevents duplicate notifications for the same file across sweep runs). Return counts.
-  - Add import at top of file:
-    ```python
-    from django.db import IntegrityError
-    ```
-    Note: `IntegrityError` is from `django.db`, `transaction` is already imported.
-  - Function:
-    ```python
-    def notify_expiring_files(ttl_hours=None, notify_hours=None):
-        """Emit file.expiring events for files approaching TTL expiry.
-
-        Queries files with status=STORED that are within notify_hours of
-        their TTL expiry. Relies on the outbox idempotency constraint
-        to prevent duplicate notifications across sweep runs.
-
-        Args:
-            ttl_hours: File TTL in hours. Defaults to settings.FILE_UPLOAD_TTL_HOURS.
-            notify_hours: Hours before expiry to notify. Defaults to
-                settings.FILE_UPLOAD_EXPIRY_NOTIFY_HOURS.
-
-        Returns:
-            dict: {"notified": int, "skipped": int}
-        """
-        if ttl_hours is None:
-            ttl_hours = settings.FILE_UPLOAD_TTL_HOURS
-        if notify_hours is None:
-            notify_hours = getattr(settings, "FILE_UPLOAD_EXPIRY_NOTIFY_HOURS", 1)
-
-        cutoff = timezone.now() - timedelta(hours=ttl_hours - notify_hours)
-        expiring_qs = UploadFile.objects.filter(
-            status=UploadFile.Status.STORED,
-            created_at__lt=cutoff,
-        )
-
-        notified = 0
-        skipped = 0
-        for upload in expiring_qs.iterator():
-            try:
-                with transaction.atomic():
-                    emit_event(
-                        aggregate_type="UploadFile",
-                        aggregate_id=str(upload.pk),
-                        event_type="file.expiring",
-                        payload={
-                            "file_id": str(upload.pk),
-                            "original_filename": upload.original_filename,
-                            "content_type": upload.content_type,
-                            "size_bytes": upload.size_bytes,
-                            "sha256": upload.sha256,
-                            "url": upload.file.url,
-                            "expires_at": str(
-                                upload.created_at + timedelta(hours=ttl_hours)
-                            ),
-                        },
-                    )
-                notified += 1
-            except IntegrityError:
-                skipped += 1  # Already notified (idempotency constraint)
-
-        logger.info(
-            "Expiring file notifications: %d notified, %d skipped (already notified).",
-            notified,
-            skipped,
-        )
-        return {"notified": notified, "skipped": skipped}
-    ```
-  - Add missing imports at top of file (after existing imports):
-    ```python
-    from datetime import timedelta
-
-    from django.utils import timezone
-    ```
+- [x] **Step 14a**: Add `notify_expiring_files()` service to `uploads/services/uploads.py`
+  - Files: `uploads/services/uploads.py` — add function after `finalize_batch()` (after line 271), add `IntegrityError` to existing `django.db` import (line 12), add `timedelta` import from `datetime` (line 7), add `timezone` from `django.utils` (line 13)
+  - Details: `notify_expiring_files(ttl_hours=None, notify_hours=None) -> dict`
+    - Defaults from `settings.FILE_UPLOAD_TTL_HOURS` and `settings.FILE_UPLOAD_EXPIRY_NOTIFY_HOURS`
+    - Query: `UploadFile.objects.filter(status=STORED, created_at__lt=cutoff)` where `cutoff = now - timedelta(hours=ttl_hours - notify_hours)`
+    - Iterate with `.iterator()` for memory efficiency
+    - Per file: `transaction.atomic()` + `emit_event(aggregate_type="UploadFile", event_type="file.expiring")` with payload including `file_id`, `original_filename`, `content_type`, `size_bytes`, `sha256`, `url`, `expires_at`
+    - Catch `IntegrityError` per file (idempotency — outbox unique constraint `(event_type, idempotency_key)` prevents duplicate notifications for the same file)
+    - Return: `{"notified": int, "skipped": int}`
   - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && python -c "from uploads.services.uploads import notify_expiring_files; print('OK')"`
 
 - [x] **Step 14b**: Add `notify_expiring_files_task` to `uploads/tasks.py`
   - Files: `uploads/tasks.py` — add new task after `cleanup_expired_upload_files_task` (after line 66)
-  - Details: Follow existing task pattern (`@shared_task(bind=True)`, lazy imports, service delegation, structured return). The task runs hourly via celery-beat to sweep for files approaching expiry.
-  - Task:
-    ```python
-    @shared_task(
-        name="uploads.tasks.notify_expiring_files_task",
-        bind=True,
-        max_retries=2,
-        default_retry_delay=60,
-    )
-    def notify_expiring_files_task(self):
-        """Emit file.expiring events for files approaching TTL expiry.
-
-        Runs hourly via celery-beat. Relies on outbox idempotency
-        constraint to prevent duplicate notifications.
-
-        Returns:
-            dict: {"notified": int, "skipped": int}
-        """
-        from uploads.services.uploads import notify_expiring_files
-
-        result = notify_expiring_files()
-        if result["notified"] > 0:
-            logger.info(
-                "Notified %d expiring files, %d skipped.",
-                result["notified"],
-                result["skipped"],
-            )
-        return result
-    ```
+  - Details: Follow `cleanup_expired_upload_files_task` pattern: `@shared_task(bind=True, max_retries=2, default_retry_delay=60)`, lazy import of `notify_expiring_files`, log and return result.
+  - Task name: `uploads.tasks.notify_expiring_files_task`
   - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && python -c "from uploads.tasks import notify_expiring_files_task; print('OK')"`
 
 - [x] **Step 14c**: Add celery-beat schedule entry
-  - Files: `boot/settings.py` — add entry to `CELERY_BEAT_SCHEDULE` property (after line 170, before the closing `}`)
-  - Details: Schedule the task to run every hour using `crontab(minute=0)`.
-  - Entry to add:
-    ```python
-    "notify-expiring-files": {
-        "task": "uploads.tasks.notify_expiring_files_task",
-        "schedule": crontab(minute=0),
-        "options": {"queue": "default"},
-    },
-    ```
-  - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -c "from django.conf import settings; print('notify-expiring-files' in settings.CELERY_BEAT_SCHEDULE)"`
+  - Files: `boot/settings.py` — add entry to `CELERY_BEAT_SCHEDULE` property (before the closing `}` at line 176)
+  - Details: `"notify-expiring-files"` entry with `crontab(minute=0)` (hourly), queue `default`.
+  - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -c "from django.conf import settings; assert 'notify-expiring-files' in settings.CELERY_BEAT_SCHEDULE; print('OK')"`
 
 ### Step 15: Write tests
 
 - [x] **Step 15a**: Add tests for `WebhookEndpoint` model
-  - Files: `common/tests/test_models.py` — add `TestWebhookEndpoint` class
-  - Details: Test model creation, `__str__` method, default values (empty `event_types` list, `is_active=True`).
+  - Files: `common/tests/test_models.py` — add `TestWebhookEndpoint` class (after `TestOutboxEventPayload`)
+  - Details: 6 tests: create with all fields, `__str__` active/inactive, default `event_types=[]`, default `is_active=True`, timestamped fields auto-set.
   - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -m pytest common/tests/test_models.py::TestWebhookEndpoint -v`
 
 - [x] **Step 15b**: Add tests for webhook delivery service
   - Files: `common/tests/test_webhook.py` — new file
-  - Details: Test `compute_signature()` with known inputs. Test `deliver_to_endpoint()` using `unittest.mock.patch` on `httpx.Client.post` to mock HTTP responses (2xx success, 4xx/5xx HTTP errors, network errors/timeouts). Create `WebhookEndpoint` instances in tests. Use `make_outbox_event` fixture.
+  - Details: `TestComputeSignature` (3 tests: known HMAC, different secret, different payload) + `TestDeliverToEndpoint` (5 tests: success, HTTP error, network error, correct headers, signature verification). Uses `MagicMock(spec=httpx.Client)` for HTTP mocking. Creates `WebhookEndpoint` instances directly.
   - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -m pytest common/tests/test_webhook.py -v`
 
 - [x] **Step 15c**: Update tests for rewritten `process_pending_events()`
-  - Files: `common/tests/test_services.py` — update `TestProcessPendingEvents` class
-  - Details: Existing tests must be updated for the new return format (`{"processed", "delivered", "failed", "remaining"}` instead of `{"processed", "remaining"}`). Add new tests for:
-    - Events delivered to matching endpoints (mock httpx)
-    - Events with no matching endpoints marked DELIVERED (no HTTP calls)
-    - Failed delivery increments `attempts` and sets `next_attempt_at` with backoff
-    - Events exceeding `max_attempts` transition to FAILED
-    - `error_message` is populated on failure
-    - Inactive endpoints are excluded
-    - Event type matching (exact match, empty list matches all)
-  - Add `WebhookEndpoint` factory fixture to `common/tests/conftest.py`:
-    ```python
-    @pytest.fixture
-    def make_webhook_endpoint(db):
-        """Factory fixture to create WebhookEndpoint instances."""
-        def _make(url="https://example.com/webhook", secret="test-secret", event_types=None, is_active=True):
-            from common.models import WebhookEndpoint
-            return WebhookEndpoint.objects.create(
-                url=url, secret=secret, event_types=event_types or [], is_active=is_active,
-            )
-        return _make
-    ```
+  - Files: `common/tests/test_services.py` — update `TestProcessPendingEvents` class, `common/tests/conftest.py` — add `make_webhook_endpoint` factory fixture
+  - Details: 13 tests total covering: no endpoints (no-op delivered), skip future events, batch size, counts, skip delivered/failed, deliver to matching endpoints (mock), no matching = delivered, failed delivery + backoff, exceeds max_attempts → FAILED, error message populated, inactive excluded, exact match, empty catch-all. Uses `@patch("common.services.webhook.deliver_to_endpoint")` for HTTP mocking.
+  - Factory fixture: `make_webhook_endpoint(url, secret, event_types, is_active)` in `common/tests/conftest.py`
+  - Note: Existing tests updated for new return format (added `"delivered": 0, "failed": 0` assertions).
   - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -m pytest common/tests/test_services.py::TestProcessPendingEvents -v`
 
 - [x] **Step 15d**: Add tests for `file.stored` outbox event in `create_upload_file`
-  - Files: `uploads/tests/test_services.py` — add `TestCreateUploadFileOutboxEvent` class after `TestCreateUploadFile` (after line 123)
-  - Details: Test that successful uploads emit `file.stored` outbox event with correct payload, and failed uploads do not emit. Follow PEP 0006 plan's test specification.
-  - Add import: `from common.models import OutboxEvent`
-  - Tests:
-    - `test_stored_file_emits_outbox_event` — assert event exists with correct `aggregate_type`, `aggregate_id`, `event_type`, payload fields
-    - `test_failed_file_does_not_emit_outbox_event` — oversized file does not create event
-    - `test_outbox_event_idempotency_key` — key is `"UploadFile:{pk}"`
+  - Files: `uploads/tests/test_services.py` — add `TestCreateUploadFileOutboxEvent` class (after `TestFinalizeBatch`)
+  - Details: 3 tests: stored file emits event with correct payload, failed file does not emit, idempotency key = `"UploadFile:{pk}"`. Import `from common.models import OutboxEvent`.
   - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -m pytest uploads/tests/test_services.py::TestCreateUploadFileOutboxEvent -v`
 
 - [x] **Step 15e**: Add tests for upload view
-  - Files: `frontend/tests/test_views_upload.py` — new file
-  - Details: Test the upload view with Django's test client. Tests:
-    - GET `/app/upload/` returns 200 for authenticated user
-    - GET `/app/upload/` redirects to login for unauthenticated user
-    - POST with files creates `UploadFile` records and `UploadBatch`
-    - POST with no files returns error
-    - POST with >10 files returns error
-    - HTMX POST returns partial HTML (check `Content-Type`, no redirect)
-    - Non-HTMX POST redirects to upload page with messages
-  - Use `user` fixture, `client.force_login(user)`, `SimpleUploadedFile` for test files, `tmp_path`/`settings` for `MEDIA_ROOT`.
+  - Files: `frontend/tests/test_views_upload.py` — new file (must create `frontend/tests/__init__.py` first — no prior frontend tests exist)
+  - Details: `TestUploadViewGet` (2 tests: auth 200, unauth redirect), `TestUploadViewPost` (4 tests: files create records, no files error, too many files error, non-HTMX redirects), `TestUploadViewHtmx` (2 tests: HTMX returns partial, HTMX no files error).
+  - Uses autouse fixture `_simple_storages(settings)` to override `STORAGES` and avoid WhiteNoise manifest issues in tests. Uses `HTTP_HX_REQUEST="true"` header for HTMX tests.
   - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -m pytest frontend/tests/test_views_upload.py -v`
 
 - [x] **Step 15f**: Add tests for `notify_expiring_files()`
-  - Files: `uploads/tests/test_services.py` — add `TestNotifyExpiringFiles` class
-  - Details: Test that files within the notification window get `file.expiring` events emitted, files outside the window do not, and duplicate notifications are handled via idempotency constraint (skipped, not errored).
-  - Tests:
-    - `test_notifies_files_within_window` — file created >23h ago (with TTL=24h, notify=1h) gets notification
-    - `test_skips_files_outside_window` — file created <23h ago does not get notification
-    - `test_skips_non_stored_files` — files with status!=STORED are not notified
-    - `test_duplicate_notification_skipped` — calling twice for the same file skips on second call
-    - `test_event_payload_includes_expires_at` — payload has `expires_at` field
+  - Files: `uploads/tests/test_services.py` — add `TestNotifyExpiringFiles` class (after `TestCreateUploadFileOutboxEvent`)
+  - Details: 5 tests: notifies files within window, skips files outside window, skips non-STORED files, duplicate notification skipped (idempotency), event payload includes `expires_at`. Uses `_create_old_upload()` helper that backdates `created_at` via `UploadFile.objects.filter(pk=...).update(created_at=...)`.
   - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -m pytest uploads/tests/test_services.py::TestNotifyExpiringFiles -v`
 
 - [x] **Step 15g**: Add tests for `retry_failed_events` admin action fix
-  - Files: `common/tests/test_admin.py` — new file or add to existing
-  - Details: Test that retrying a failed event resets `attempts` to 0, not just status and `next_attempt_at`.
+  - Files: `common/tests/test_admin.py` — new file
+  - Details: `TestRetryFailedEventsAction` with 1 test: retrying a failed event resets `attempts` to 0 (simulates admin action's `.update()` call, asserts `event.attempts == 0` after retry).
   - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -m pytest common/tests/test_admin.py -v`
 
 ### Step 16: Run full test suite
 
 - [x] **Step 16**: Verify all tests pass
-  - Details: Run the complete test suite to catch any regressions.
   - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -m pytest --tb=short -q`
 
 ### Step 17: Rebuild Tailwind CSS
 
-- [x] **Step 17**: Recompile CSS to include new template classes (NOTE: tailwindcss CLI not installed locally; existing main.css contains theme tokens; full rebuild needed when CLI is available)
-  - Details: The upload template introduces new Tailwind classes that may not be in the existing compiled CSS. Run `make css` to recompile.
+- [x] **Step 17**: Recompile CSS to include new template classes
+  - Details: The upload templates introduce Tailwind classes (`border-dashed`, `bg-primary-50`, `border-primary-500`, `bg-success-50`, `text-success-700`, `bg-danger-50`, `text-danger-700`, `bg-warning-50`, `text-warning-700`, `x-cloak`) that may not be in the compiled `static/css/main.css`. Run `make tailwind-install && make css` to recompile. Note: tailwindcss CLI is not installed locally — see discussions.md open thread for options.
   - Verify: `make css && test -f static/css/main.css && echo "OK"`
 
 ## Testing
 
-- [ ] WebhookEndpoint model tests — Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -m pytest common/tests/test_models.py::TestWebhookEndpoint -v`
-- [ ] Webhook delivery service tests — Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -m pytest common/tests/test_webhook.py -v`
-- [ ] Process pending events tests (rewritten) — Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -m pytest common/tests/test_services.py::TestProcessPendingEvents -v`
-- [ ] Upload outbox event tests — Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -m pytest uploads/tests/test_services.py::TestCreateUploadFileOutboxEvent -v`
-- [ ] Upload view tests — Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -m pytest frontend/tests/test_views_upload.py -v`
-- [ ] Pre-expiry notification tests — Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -m pytest uploads/tests/test_services.py::TestNotifyExpiringFiles -v`
-- [ ] Admin retry action tests — Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -m pytest common/tests/test_admin.py -v`
-- [ ] Full existing test suite — Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -m pytest --tb=short -q`
-- [ ] Django system check — Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python manage.py check`
-- [ ] Linting — Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && ruff check .`
+| Test Suite | File | Command |
+|-----------|------|---------|
+| WebhookEndpoint model | `common/tests/test_models.py::TestWebhookEndpoint` | `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -m pytest common/tests/test_models.py::TestWebhookEndpoint -v` |
+| Webhook delivery service | `common/tests/test_webhook.py` | `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -m pytest common/tests/test_webhook.py -v` |
+| Process pending events | `common/tests/test_services.py::TestProcessPendingEvents` | `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -m pytest common/tests/test_services.py::TestProcessPendingEvents -v` |
+| Upload outbox event | `uploads/tests/test_services.py::TestCreateUploadFileOutboxEvent` | `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -m pytest uploads/tests/test_services.py::TestCreateUploadFileOutboxEvent -v` |
+| Upload view | `frontend/tests/test_views_upload.py` | `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -m pytest frontend/tests/test_views_upload.py -v` |
+| Pre-expiry notification | `uploads/tests/test_services.py::TestNotifyExpiringFiles` | `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -m pytest uploads/tests/test_services.py::TestNotifyExpiringFiles -v` |
+| Admin retry action | `common/tests/test_admin.py` | `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -m pytest common/tests/test_admin.py -v` |
+| Full suite | all | `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -m pytest --tb=short -q` |
+| Django check | — | `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python manage.py check` |
+| Linting | — | `source ~/.virtualenvs/inventlily-d22a143/bin/activate && ruff check .` |
 
 ## Rollback Plan
 
-This PEP is rollback-safe with the following steps:
+This PEP is rollback-safe with the following ordered steps:
 
-1. **Reverse migration**: The only migration is `common/migrations/0002_webhookendpoint.py`. Reverse with:
+1. **Reverse migration**: `common/migrations/0002_webhookendpoint.py` — drops the `webhook_endpoint` table.
    ```bash
    source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python manage.py migrate common 0001
    ```
    Then delete the migration file.
 
-2. **Revert `process_pending_events()`**: Restore the original placeholder implementation from `common/services/outbox.py` (no-op delivery, marks events as DELIVERED). Reset `DELIVERY_BATCH_SIZE` to 100.
+2. **Revert `process_pending_events()`**: In `common/services/outbox.py`, restore the original placeholder implementation (no HTTP calls, marks events as DELIVERED). Reset `DELIVERY_BATCH_SIZE` to 100. Remove `random`, `httpx`, `SoftTimeLimitExceeded` imports and `WEBHOOK_TIMEOUT` constant.
 
-3. **Revert `create_upload_file()`**: Remove the `transaction.atomic()` wrapping and `emit_event()` call. Restore the original direct `UploadFile.objects.create()` call.
+3. **Revert `create_upload_file()`**: In `uploads/services/uploads.py`, remove the `transaction.atomic()` wrapping and `emit_event()` call. Restore direct `UploadFile.objects.create()` call. Remove `from common.services.outbox import emit_event` import.
 
-4. **Remove new files**: Delete `common/services/webhook.py`, `frontend/views/upload.py`, `frontend/templates/frontend/upload/` directory.
+4. **Remove `notify_expiring_files()`**: In `uploads/services/uploads.py`, remove the function. Remove `IntegrityError`, `timedelta`, `timezone` imports if no longer needed. In `uploads/tasks.py`, remove `notify_expiring_files_task`.
 
-5. **Revert modified files**: Remove upload URL from `frontend/urls.py`, remove upload links from `sidebar.html`, remove `FILE_UPLOAD_EXPIRY_NOTIFY_HOURS` from `boot/settings.py`, remove celery-beat entry for `notify-expiring-files`, remove `notify_expiring_files_task` from `uploads/tasks.py`, remove `notify_expiring_files()` from `uploads/services/uploads.py`.
+5. **Remove new files**: Delete `common/services/webhook.py`, `frontend/views/upload.py`, `frontend/templates/frontend/upload/` directory, `common/tests/test_webhook.py`, `common/tests/test_admin.py`, `frontend/tests/test_views_upload.py`.
 
-6. **Revert `retry_failed_events`**: Remove `attempts=0` from the admin action's `.update()` call.
+6. **Revert modified files**: Remove upload URL from `frontend/urls.py`, remove upload links from `sidebar.html`, remove `FILE_UPLOAD_EXPIRY_NOTIFY_HOURS` from `boot/settings.py`, remove `notify-expiring-files` celery-beat entry.
 
-7. **Remove dependency**: Remove `httpx>=0.27` from `requirements.in` and recompile lockfiles.
+7. **Revert `retry_failed_events`**: In `common/admin.py`, remove `attempts=0` from the `.update()` call. Remove `WebhookEndpoint` import and `WebhookEndpointAdmin` class.
 
-8. **Existing outbox events**: Any `file.stored` or `file.expiring` events already emitted will be cleaned up by the existing `cleanup_delivered_outbox_events_task` after `OUTBOX_RETENTION_HOURS` (7 days). No manual cleanup needed.
+8. **Revert task logging**: In `common/tasks.py`, restore original logging format (without `delivered`/`failed` counts).
+
+9. **Remove dependency**: Remove `httpx>=0.27` from `requirements.in` and recompile lockfiles:
+   ```bash
+   uv pip compile --generate-hashes requirements.in -o requirements.txt
+   uv pip compile --generate-hashes requirements-dev.in -o requirements-dev.txt
+   ```
+
+10. **Existing outbox events**: `file.stored` and `file.expiring` events already emitted will be cleaned up by `cleanup_delivered_outbox_events_task` after `OUTBOX_RETENTION_HOURS` (7 days). No manual cleanup needed.
 
 ## aikb Impact Map
 
-- [ ] `aikb/models.md` — Add `WebhookEndpoint (TimeStampedModel)` section after OutboxEvent. Document fields (`id`, `url`, `secret`, `event_types`, `is_active`), `db_table = "webhook_endpoint"`, `Meta` ordering, `__str__` format. Update Entity Relationship Summary to show WebhookEndpoint as a standalone model in the common app.
-- [ ] `aikb/services.md` — Update `common/services/outbox.py` section: change `process_pending_events` description from "marks events as delivered without calling any handler" to document three-phase delivery with webhook HTTP POST, retry with exponential backoff, and `DELIVERY_BATCH_SIZE=20`. Add new `common/services/webhook.py` section documenting `compute_signature()` and `deliver_to_endpoint()`. Update `uploads/services/uploads.py` section: document that `create_upload_file()` now emits `file.stored` outbox event, add `notify_expiring_files()` function documentation.
-- [ ] `aikb/tasks.md` — Update `deliver_outbox_events_task` batch limit from 100 to 20 and return format to include `delivered` and `failed` counts. Add `notify_expiring_files_task` entry under Uploads App section (name, purpose, schedule, queue, return format). Update Current Schedule table with new `notify-expiring-files` entry (hourly crontab).
-- [ ] `aikb/signals.md` — N/A (no signal changes)
-- [ ] `aikb/admin.md` — Add `WebhookEndpointAdmin` section under `common/admin.py` with `list_display`, `list_filter`, `search_fields`, `readonly_fields`, `date_hierarchy`. Update `OutboxEventAdmin` `retry_failed_events` action description to note that it now also resets `attempts=0`.
-- [ ] `aikb/cli.md` — N/A (no CLI changes)
-- [ ] `aikb/architecture.md` — Update URL Routing to add `/app/upload/` route. Update Background Processing to mention webhook delivery and pre-expiry notification tasks. Add note about `httpx` for webhook delivery.
-- [ ] `aikb/conventions.md` — N/A (no new conventions introduced; follows existing patterns)
-- [ ] `aikb/dependencies.md` — Add `httpx` to Production Dependencies table: version `>=0.27`, purpose "HTTP client for webhook delivery". Note transitive deps (`httpcore`, `certifi`, `idna`, `sniffio`, `anyio`, `h11`).
-- [ ] `aikb/specs-roadmap.md` — Move "upload UI" and "webhook delivery" from "What's Not Built Yet" to "What's Ready". Add "file portal pipeline (upload → webhook → pre-expiry notification)".
-- [ ] `CLAUDE.md` — Add `FILE_UPLOAD_EXPIRY_NOTIFY_HOURS` to File Upload Settings table. Add `/app/upload/` to URL Structure section. Update Background Task Infrastructure to mention `notify_expiring_files_task`. Add `WebhookEndpoint` to the common app description in Django App Structure table.
+- [ ] **`aikb/models.md`** — Add `WebhookEndpoint (TimeStampedModel)` section after the OutboxEvent section (after `---` at line 52). Document all 4 fields (`url`, `secret`, `event_types`, `is_active`) + UUID7 PK, `db_table = "webhook_endpoint"`, `Meta` ordering `["-created_at"]`, `__str__` format. Note: standalone model with no FK relationships. Update Entity Relationship Summary (or add one if absent) to show WebhookEndpoint as a standalone configuration model in the common app.
+
+- [ ] **`aikb/services.md`** — Three updates:
+  1. Rewrite `process_pending_events` description (line 65–66): change batch size from 100 to 20, change from "marks events as delivered without calling any handler" to "delivers events via HTTP POST to matching active WebhookEndpoint records using `common/services/webhook.py`". Document three-phase approach, retry/backoff, `SoftTimeLimitExceeded` handling. Update return format to `{"processed", "delivered", "failed", "remaining"}`.
+  2. Add new `common/services/webhook.py` section: document `compute_signature(payload_bytes, secret)` and `deliver_to_endpoint(client, endpoint, event)` functions.
+  3. Update `uploads/services/uploads.py` section: note that `create_upload_file()` now emits `file.stored` outbox event on success (wrapped in `transaction.atomic()`). Add `notify_expiring_files(ttl_hours, notify_hours)` function documentation with return format `{"notified", "skipped"}`.
+
+- [ ] **`aikb/tasks.md`** — Three updates:
+  1. Update `deliver_outbox_events_task` entry (line 57): change batch limit from 100 to 20, update return format to `{"processed", "delivered", "failed", "remaining"}`.
+  2. Add `notify_expiring_files_task` entry under Uploads App section: name `uploads.tasks.notify_expiring_files_task`, purpose "emit file.expiring events for files approaching TTL expiry", schedule `crontab(minute=0)` (hourly), queue `default`, return format `{"notified", "skipped"}`, retry `max_retries=2, default_retry_delay=60`.
+  3. Update Current Schedule table (line 149–153): add `notify-expiring-files` row with task path, schedule "Every hour (crontab)", queue "default".
+
+- [ ] **`aikb/admin.md`** — Two updates:
+  1. Add `WebhookEndpointAdmin` section under `common/admin.py` (after OutboxEventAdmin): document `list_display`, `list_filter`, `search_fields`, `readonly_fields`, `date_hierarchy`.
+  2. Update `OutboxEventAdmin` `retry_failed_events` action description (line 38): note that it now also resets `attempts=0` in addition to status, next_attempt_at, and error_message.
+
+- [ ] **`aikb/architecture.md`** — Three updates:
+  1. Update URL routing section: add `/app/upload/` route (mapped to `frontend/views/upload.py:upload_view`).
+  2. Update `common/` directory tree (line 48–57): add `services/webhook.py`, update `models.py` description to include `WebhookEndpoint`, update `admin.py` to include `WebhookEndpointAdmin`, update `tests/` to include `test_webhook.py`, `test_admin.py`.
+  3. Update `frontend/` directory tree (line 61–67): add `views/upload.py`, add `templates/frontend/upload/` (index.html, partials/results.html), add `tests/test_views_upload.py`.
+
+- [ ] **`aikb/conventions.md`** — N/A (no new conventions introduced; all implementations follow existing patterns)
+
+- [ ] **`aikb/dependencies.md`** — Add `httpx` to Production Dependencies table (after "Frontend" section, line 76): version `>=0.27`, purpose "HTTP client for webhook delivery (synchronous httpx.Client)". Note transitive deps: `httpcore`, `certifi`, `idna`, `sniffio`, `anyio`, `h11`.
+
+- [ ] **`aikb/signals.md`** — N/A (no signal changes)
+
+- [ ] **`aikb/cli.md`** — N/A (no CLI changes)
+
+- [ ] **`aikb/specs-roadmap.md`** — Update "What's Ready" table: add rows for "Upload frontend views (upload page)" and "Webhook delivery (outbox → HTTP POST)". Update "What's Not Built Yet": remove "Upload frontend views" from the list (it's now built).
+
+- [ ] **`CLAUDE.md`** — Four updates:
+  1. Add `FILE_UPLOAD_EXPIRY_NOTIFY_HOURS` to File Upload Settings documentation (after `FILE_UPLOAD_ALLOWED_TYPES` description).
+  2. Add `/app/upload/` to URL Structure section.
+  3. Update Background Task Infrastructure section: mention `notify_expiring_files_task` (hourly sweep for pre-expiry notifications).
+  4. Update common app description in Django App Structure table: add `WebhookEndpoint` model and `webhook.py` service.
 
 ## Final Verification
 
 ### Acceptance Criteria
 
 - [ ] **`/app/upload/` page is accessible to authenticated users and renders a drag-and-drop file upload interface**
-  - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -m pytest frontend/tests/test_views_upload.py -k "test_get_upload_page" -v`
+  - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -m pytest frontend/tests/test_views_upload.py::TestUploadViewGet::test_authenticated_user_gets_200 -v`
 
-- [ ] **Files uploaded via the upload page are stored using the configured storage backend**
-  - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -m pytest frontend/tests/test_views_upload.py -k "test_post_upload" -v`
+- [ ] **Files uploaded via the upload page are stored using the configured storage backend (S3 in production, local in dev)**
+  - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -m pytest frontend/tests/test_views_upload.py::TestUploadViewPost::test_post_with_files_creates_records -v`
 
 - [ ] **Upload validation enforces `FILE_UPLOAD_MAX_SIZE` and `FILE_UPLOAD_ALLOWED_TYPES` settings**
   - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -m pytest uploads/tests/test_services.py::TestValidateFile -v`
 
-- [ ] **`WebhookEndpoint` model exists with `url`, `secret`, `event_types`, and `is_active` fields**
+- [ ] **`WebhookEndpoint` model exists in `common/models.py` with `url`, `secret`, `event_types`, and `is_active` fields**
   - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -c "from common.models import WebhookEndpoint; e = WebhookEndpoint(); print(e.url, e.secret, e.event_types, e.is_active)"`
 
 - [ ] **`WebhookEndpointAdmin` is registered in Django admin with list display and filtering**
   - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -c "from django.contrib import admin; admin.autodiscover(); from common.models import WebhookEndpoint; assert WebhookEndpoint in admin.site._registry; print('OK')"`
 
-- [ ] **`process_pending_events()` delivers events via HTTP POST to all matching active endpoints**
-  - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -m pytest common/tests/test_services.py::TestProcessPendingEvents -v`
+- [ ] **`process_pending_events()` delivers events via HTTP POST to all matching active `WebhookEndpoint` records**
+  - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -m pytest common/tests/test_services.py::TestProcessPendingEvents::test_delivers_to_matching_endpoints -v`
 
-- [ ] **Webhook requests include `X-Webhook-Signature`, `X-Webhook-Event`, and `X-Webhook-Delivery` headers**
-  - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -m pytest common/tests/test_webhook.py -k "test_deliver_to_endpoint" -v`
+- [ ] **Webhook requests include `X-Webhook-Signature` (HMAC-SHA256), `X-Webhook-Event`, and `X-Webhook-Delivery` headers**
+  - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -m pytest common/tests/test_webhook.py::TestDeliverToEndpoint::test_correct_headers_sent common/tests/test_webhook.py::TestDeliverToEndpoint::test_signature_matches_payload -v`
 
-- [ ] **Webhook delivery respects existing retry/backoff logic**
-  - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -m pytest common/tests/test_services.py -k "retry" -v`
+- [ ] **Webhook delivery respects the existing retry/backoff logic (increment attempts, exponential `next_attempt_at`)**
+  - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -m pytest common/tests/test_services.py::TestProcessPendingEvents::test_failed_delivery_increments_attempts_and_sets_backoff common/tests/test_services.py::TestProcessPendingEvents::test_exceeds_max_attempts_transitions_to_failed -v`
 
-- [ ] **Events with no matching active endpoints are marked as DELIVERED**
-  - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -m pytest common/tests/test_services.py -k "no_matching" -v`
+- [ ] **Events with no matching active endpoints are marked as DELIVERED (no-op delivery, not an error)**
+  - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -m pytest common/tests/test_services.py::TestProcessPendingEvents::test_marks_pending_events_as_delivered_no_endpoints common/tests/test_services.py::TestProcessPendingEvents::test_no_matching_endpoints_marks_delivered -v`
 
 - [ ] **`httpx` is listed in `requirements.in` and compiled into `requirements.txt`**
   - Verify: `grep 'httpx' requirements.in && grep 'httpx' requirements.txt`
 
-- [ ] **A `file.expiring` outbox event is emitted before TTL-based file cleanup**
-  - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -m pytest uploads/tests/test_services.py::TestNotifyExpiringFiles -v`
+- [ ] **A `file.expiring` outbox event is emitted before TTL-based file cleanup, containing the file's metadata and URL**
+  - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -m pytest uploads/tests/test_services.py::TestNotifyExpiringFiles::test_notifies_files_within_window uploads/tests/test_services.py::TestNotifyExpiringFiles::test_event_payload_includes_expires_at -v`
 
-- [ ] **`FILE_UPLOAD_EXPIRY_NOTIFY_HOURS` setting controls notification timing (default: 1 hour)**
+- [ ] **`FILE_UPLOAD_EXPIRY_NOTIFY_HOURS` setting controls how far before expiry the notification fires (default: 1 hour)**
   - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -c "from django.conf import settings; assert settings.FILE_UPLOAD_EXPIRY_NOTIFY_HOURS == 1; print('OK')"`
 
 - [ ] **Sidebar navigation includes an "Upload" link to `/app/upload/`**
-  - Verify: `grep -c "frontend:upload" frontend/templates/frontend/components/sidebar.html` should return `2`
+  - Verify: `test $(grep -c "frontend:upload" frontend/templates/frontend/components/sidebar.html) -eq 2 && echo "OK"`
 
 - [ ] **`python manage.py check` passes**
   - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python manage.py check`
 
-- [ ] **All tests pass**
+- [ ] **All tests pass (upload view, webhook delivery, pre-expiry notification)**
   - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -m pytest --tb=short -q`
 
 - [ ] **`aikb/` documentation is updated to reflect new components**
@@ -1126,15 +454,10 @@ This PEP is rollback-safe with the following steps:
 ### Integration Checks
 
 - [ ] **End-to-end upload → outbox event → webhook delivery workflow**
-  - Steps:
-    1. Create a `WebhookEndpoint` in the database (can use Django admin or shell)
-    2. Upload a file via the upload page
-    3. Verify `UploadFile` record with status=STORED is created
-    4. Verify `OutboxEvent` with `event_type="file.stored"` is created
-    5. Verify `process_pending_events()` delivers the event via HTTP POST (in eager mode, this happens synchronously during the upload request via `on_commit` → `deliver_outbox_events_task`)
+  - Steps: Upload a file → verify `UploadFile` (status=STORED) + `OutboxEvent` (event_type="file.stored") created → verify `process_pending_events()` delivers (in eager mode, fires synchronously via `on_commit`)
   - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -c "
 import django; django.setup()
-from common.models import OutboxEvent, WebhookEndpoint
+from common.models import OutboxEvent
 from uploads.services.uploads import create_upload_file, create_batch, finalize_batch
 from accounts.models import User
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -1148,30 +471,21 @@ finalize_batch(batch)
 assert upload.status == 'stored', f'Expected stored, got {upload.status}'
 event = OutboxEvent.objects.get(event_type='file.stored')
 assert event.payload['file_id'] == str(upload.pk)
-print('Integration test passed: upload + outbox event OK')
+print('Integration: upload + outbox event OK')
 User.objects.filter(username='integ_test_0007').delete()
 "`
 
 - [ ] **Pre-expiry notification workflow**
-  - Steps:
-    1. Create an `UploadFile` with `created_at` set to >23 hours ago (with TTL=24h, notify=1h)
-    2. Call `notify_expiring_files()`
-    3. Verify `OutboxEvent` with `event_type="file.expiring"` is created with correct payload
   - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -m pytest uploads/tests/test_services.py::TestNotifyExpiringFiles::test_notifies_files_within_window -v`
 
 - [ ] **Webhook delivery with no configured endpoints (no-op)**
-  - Steps:
-    1. Ensure no `WebhookEndpoint` records exist
-    2. Create a pending `OutboxEvent`
-    3. Call `process_pending_events()`
-    4. Verify event is marked DELIVERED (no HTTP calls made)
-  - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -m pytest common/tests/test_services.py -k "no_matching_endpoints" -v`
+  - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -m pytest common/tests/test_services.py::TestProcessPendingEvents::test_marks_pending_events_as_delivered_no_endpoints -v`
 
 ### Regression Checks
 
-- [ ] `python manage.py check` passes
+- [ ] Django system check passes
   - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python manage.py check`
-- [ ] `ruff check .` passes
+- [ ] Linting passes
   - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && ruff check .`
 - [ ] Full test suite passes
   - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -m pytest --tb=short -q`
@@ -1184,254 +498,144 @@ User.objects.filter(username='integ_test_0007').delete()
 
 ## Detailed Todo List
 
-### Phase 1: Setup & Dependencies (Step 1)
+Granular checklist organized by phase. References Implementation Steps above for detailed specifications.
 
-- [ ] Add `httpx>=0.27` to `requirements.in` with comment `# HTTP client (webhook delivery)`
-- [ ] Run `uv pip compile --generate-hashes requirements.in -o requirements.txt`
-- [ ] Run `uv pip compile --generate-hashes requirements-dev.in -o requirements-dev.txt`
-- [ ] Run `uv pip install -r requirements-dev.txt`
-- [ ] Verify: `python -c "import httpx; print(httpx.__version__)"` succeeds
+### Phase 1: Dependencies & Setup (Step 1)
+
+- [x] Add `httpx>=0.27` to `requirements.in` after `django-htmx` line (Step 1a)
+- [x] Run `uv pip compile --generate-hashes` for both `requirements.txt` and `requirements-dev.txt` (Step 1b)
+- [x] Install compiled deps: `uv pip install -r requirements-dev.txt` (Step 1b)
+- [x] Verify `import httpx` succeeds in virtualenv (Step 1b)
 
 ### Phase 2: WebhookEndpoint Model & Admin (Steps 2–3)
 
-- [ ] Add `DjangoJSONEncoder` import to `common/models.py` (`from django.core.serializers.json import DjangoJSONEncoder`)
-- [ ] Add `WebhookEndpoint(TimeStampedModel)` model class to `common/models.py` after `OutboxEvent` (per Step 2a code)
-  - [ ] Fields: `id` (UUID, uuid7 default), `url` (URLField, max_length=2048), `secret` (CharField, max_length=255), `event_types` (JSONField, default=list), `is_active` (BooleanField, default=True)
-  - [ ] Meta: `db_table = "webhook_endpoint"`, `ordering = ["-created_at"]`, verbose names
-  - [ ] `__str__` returns `"{url} (active|inactive)"`
-- [ ] Run `makemigrations common` — expect `0002_webhookendpoint.py`
-- [ ] Run `migrate` — apply the new migration
-- [ ] Verify: `showmigrations common` shows the new migration applied
-- [ ] Add `WebhookEndpoint` to the import in `common/admin.py`
-- [ ] Add `WebhookEndpointAdmin` class to `common/admin.py` (per Step 3 code)
-  - [ ] `list_display`: `url`, `is_active`, `event_types`, `created_at`
-  - [ ] `list_filter`: `is_active`, `created_at`
-  - [ ] `search_fields`: `url`
-  - [ ] `readonly_fields`: `pk`, `created_at`, `updated_at`
-  - [ ] `date_hierarchy`: `created_at`
-- [ ] Verify: admin autodiscover finds `WebhookEndpoint` in registry
+- [x] Add `WebhookEndpoint(TimeStampedModel)` class to `common/models.py` after `OutboxEvent` (Step 2a)
+  - [x] UUID7 PK, `url` (URLField, max_length=2048), `secret` (CharField, max_length=255)
+  - [x] `event_types` (JSONField, default=list, blank=True, encoder=DjangoJSONEncoder)
+  - [x] `is_active` (BooleanField, default=True)
+  - [x] `Meta`: `db_table = "webhook_endpoint"`, `ordering = ["-created_at"]`
+  - [x] `__str__`: `f"{self.url} (active|inactive)"`
+- [x] Run `makemigrations common` to generate `0002_webhookendpoint.py` (Step 2b)
+- [x] Run `migrate` to apply migration (Step 2b)
+- [x] Update `common/admin.py` import to include `WebhookEndpoint` (Step 3)
+- [x] Add `WebhookEndpointAdmin` with `list_display`, `list_filter`, `search_fields`, `readonly_fields`, `date_hierarchy` (Step 3)
 
-### Phase 3: Webhook Delivery Infrastructure (Steps 4–7)
+### Phase 3: Webhook Delivery Service (Steps 4–7)
 
-#### 3a: Webhook delivery service (Step 4)
-
-- [ ] Create `common/services/webhook.py` with imports (`hashlib`, `hmac`, `json`, `logging`, `httpx`)
-- [ ] Implement `compute_signature(payload_bytes, secret)` — HMAC-SHA256 hex digest
-- [ ] Implement `deliver_to_endpoint(client, endpoint, event)` — HTTP POST with signature and metadata headers
-  - [ ] Headers: `Content-Type`, `X-Webhook-Signature`, `X-Webhook-Event`, `X-Webhook-Delivery`
-  - [ ] Returns `{"ok": bool, "status_code": int|None, "error": str}`
-  - [ ] Handles `httpx.HTTPStatusError` (4xx/5xx) and `httpx.RequestError` (network errors)
-- [ ] Define `WEBHOOK_TIMEOUT = httpx.Timeout(connect=10.0, read=30.0)` module constant
-- [ ] Verify: `from common.services.webhook import compute_signature, deliver_to_endpoint` imports cleanly
-
-#### 3b: Rewrite `process_pending_events()` (Step 5)
-
-- [ ] Add imports to `common/services/outbox.py`: `random`, `httpx`, `SoftTimeLimitExceeded`
-- [ ] Change `DELIVERY_BATCH_SIZE` from 100 to 20
-- [ ] Add `WEBHOOK_TIMEOUT` constant after `CLEANUP_BATCH_SIZE`
-- [ ] Rewrite `process_pending_events()` with three-phase approach (per Step 5 code):
-  - [ ] Phase 1 (Fetch): `select_for_update(skip_locked=True)` in short atomic block, filter by `next_attempt_at__lte=now`
-  - [ ] Load active `WebhookEndpoint` records once for the batch
-  - [ ] Phase 2 (Deliver): iterate events, match endpoints by `event_types`, call `deliver_to_endpoint()` per endpoint via shared `httpx.Client`
-  - [ ] Mark events with no matching endpoints as `all_ok=True` (no-op delivery)
-  - [ ] Handle `SoftTimeLimitExceeded` — save progress for processed events, skip unprocessed
-  - [ ] Phase 3 (Update): in atomic block, update each event's status, `attempts`, `delivered_at`, `next_attempt_at`, `error_message`
-  - [ ] Exponential backoff: `delay = min(60 * (2 ** (attempts - 1)), 3600)` with 10% jitter
-  - [ ] Transition to FAILED when `attempts >= max_attempts`
-- [ ] Update return format: `{"processed", "delivered", "failed", "remaining"}`
-- [ ] Verify: `from common.services.outbox import process_pending_events` imports cleanly
-
-#### 3c: Update delivery task logging (Step 6)
-
-- [ ] Update `deliver_outbox_events_task` in `common/tasks.py` to log `delivered` and `failed` counts
-- [ ] Verify: `from common.tasks import deliver_outbox_events_task` imports cleanly
-
-#### 3d: Fix admin retry action (Step 7)
-
-- [ ] Add `attempts=0` to the `retry_failed_events` admin action's `.update()` call in `common/admin.py`
-- [ ] Verify: `grep -A 5 "retry_failed_events" common/admin.py | grep "attempts=0"` succeeds
+- [x] Create `common/services/webhook.py` (Step 4)
+  - [x] `compute_signature(payload_bytes, secret)` — HMAC-SHA256 hex digest
+  - [x] `deliver_to_endpoint(client, endpoint, event)` — HTTP POST with `X-Webhook-Signature`, `X-Webhook-Event`, `X-Webhook-Delivery` headers; returns `{"ok", "status_code", "error"}`
+- [x] Rewrite `process_pending_events()` in `common/services/outbox.py` (Step 5)
+  - [x] Change `DELIVERY_BATCH_SIZE` from 100 to 20
+  - [x] Add `WEBHOOK_TIMEOUT = httpx.Timeout(30.0, connect=10.0)` constant
+  - [x] Phase 1 (Fetch): `transaction.atomic()` + `select_for_update(skip_locked=True)`
+  - [x] Phase 2 (Deliver): shared `httpx.Client` context manager, endpoint matching, `SoftTimeLimitExceeded` handler
+  - [x] Phase 3 (Update): increment `attempts`, DELIVERED/FAILED/retry with exponential backoff + jitter
+  - [x] Update return format to `{"processed", "delivered", "failed", "remaining"}`
+- [x] Update `deliver_outbox_events_task` logging in `common/tasks.py` for new return fields (Step 6)
+- [x] Update stale docstring in `deliver_outbox_events_task` (Step 6)
+- [x] Fix `retry_failed_events` admin action: add `attempts=0` to `.update()` call (Step 7)
 
 ### Phase 4: Upload Pipeline (Steps 8–12)
 
-#### 4a: `file.stored` event emission (Step 8)
-
-- [ ] Add `from common.services.outbox import emit_event` import to `uploads/services/uploads.py`
-- [ ] Wrap `UploadFile.objects.create(...)` in `transaction.atomic()` with `emit_event()` for successful uploads (status=STORED)
-  - [ ] Event: `aggregate_type="UploadFile"`, `event_type="file.stored"`
-  - [ ] Payload: `file_id`, `original_filename`, `content_type`, `size_bytes`, `sha256`, `url`
-- [ ] Verify: `grep "emit_event" uploads/services/uploads.py` shows the call
-
-#### 4b: Upload view (Step 9)
-
-- [ ] Create `frontend/views/upload.py` with `upload_view` function (per Step 9 code)
-  - [ ] `@frontend_login_required` and `@require_http_methods(["GET", "POST"])` decorators
-  - [ ] GET: render `frontend/upload/index.html`
-  - [ ] POST: process `request.FILES.getlist("files")`
-  - [ ] Validate: no files → error, >10 files → error
-  - [ ] Call `create_batch()` → `create_upload_file()` per file → `finalize_batch()`
-  - [ ] HTMX: return `frontend/upload/partials/results.html` partial
-  - [ ] Non-HTMX: redirect with Django messages
-- [ ] Verify: `from frontend.views.upload import upload_view` imports cleanly
-
-#### 4c: Upload URL route (Step 10)
-
-- [ ] Add `upload` import to `frontend/urls.py`: `from frontend.views import auth, dashboard, upload`
-- [ ] Add URL pattern: `path("upload/", upload.upload_view, name="upload")`
-- [ ] Verify: `reverse('frontend:upload')` returns `/app/upload/`
-
-#### 4d: Upload page template (Step 11a)
-
-- [ ] Create directory `frontend/templates/frontend/upload/`
-- [ ] Create `frontend/templates/frontend/upload/index.html` (per Step 11a code)
-  - [ ] Extends `frontend/base.html`
-  - [ ] Blocks: `page_title`, `page_header`, `sidebar_active` (= `upload`), `page_content`
-  - [ ] Drag-and-drop zone with Alpine.js `uploadZone()` component
-  - [ ] `<form>` with `enctype="multipart/form-data"`, `hx-post`, `hx-target="#upload-results"`
-  - [ ] `<input type="file" name="files" multiple>` hidden, triggered by click/drop
-  - [ ] File preview list, submit button (both `x-show` conditioned on `fileNames.length > 0`)
-  - [ ] `#upload-results` div for HTMX swap target
-  - [ ] Django messages fallback block
-- [ ] Verify: file exists at `frontend/templates/frontend/upload/index.html`
-
-#### 4e: Upload results partial (Step 11b)
-
-- [ ] Create directory `frontend/templates/frontend/upload/partials/`
-- [ ] Create `frontend/templates/frontend/upload/partials/results.html` (per Step 11b code)
-  - [ ] Error state: danger alert with `{{ error }}`
-  - [ ] Success state: results list with per-file status icons (stored/failed)
-  - [ ] Summary header with stored/failed counts
-- [ ] Verify: file exists at `frontend/templates/frontend/upload/partials/results.html`
-
-#### 4f: Sidebar navigation link (Step 12)
-
-- [ ] Add Upload link to desktop sidebar in `sidebar.html` (after Dashboard link, before the placeholder comment)
-  - [ ] Upload icon SVG, `href="{% url 'frontend:upload' %}"`, active state class binding
-- [ ] Add Upload link to mobile sidebar in `sidebar.html` (after Dashboard link, before `</nav>`)
-  - [ ] Same icon SVG, simplified class binding (no active state toggle needed)
-- [ ] Verify: `grep -c "frontend:upload" frontend/templates/frontend/components/sidebar.html` returns `2`
+- [x] Add `file.stored` event emission to `create_upload_file()` in `uploads/services/uploads.py` (Step 8)
+  - [x] Import `emit_event` from `common.services.outbox`
+  - [x] Wrap `UploadFile.objects.create(status=STORED)` + `emit_event()` in `transaction.atomic()`
+  - [x] Payload: `file_id`, `original_filename`, `content_type`, `size_bytes`, `sha256`, `url`
+- [x] Create `frontend/views/upload.py` with `upload_view()` function (Step 9)
+  - [x] `@frontend_login_required` + `@require_http_methods(["GET", "POST"])`
+  - [x] GET: render `frontend/upload/index.html`
+  - [x] POST: process `request.FILES.getlist("files")`, create batch, loop files, finalize
+  - [x] HTMX response: render `frontend/upload/partials/results.html`
+  - [x] Standard response: redirect with Django messages
+  - [x] Guard: `MAX_FILES_PER_REQUEST = 10`
+- [x] Add `/app/upload/` URL route to `frontend/urls.py` (Step 10)
+- [x] Create `frontend/templates/frontend/upload/index.html` (Step 11a)
+  - [x] Extends `frontend/base.html`, block slots: `page_title`, `page_header`, `sidebar_active`, `page_content`
+  - [x] Alpine.js `uploadZone()` component with drag-and-drop
+  - [x] HTMX form with `hx-post`, `hx-target="#upload-results"`, `hx-swap="innerHTML"`
+  - [x] File input, selected files preview, submit button, results area
+- [x] Create `frontend/templates/frontend/upload/partials/results.html` (Step 11b)
+  - [x] Error state and per-file results list with status icons
+- [x] Add Upload link to desktop sidebar in `sidebar.html` (Step 12)
+- [x] Add Upload link to mobile sidebar in `sidebar.html` (Step 12)
 
 ### Phase 5: Pre-Expiry Notifications (Steps 13–14)
 
-#### 5a: Settings (Step 13)
+- [x] Add `FILE_UPLOAD_EXPIRY_NOTIFY_HOURS = 1` setting to `boot/settings.py` `Base` class (Step 13)
+- [x] Add `notify_expiring_files()` service to `uploads/services/uploads.py` (Step 14a)
+  - [x] Query: `UploadFile.objects.filter(status=STORED, created_at__lt=cutoff)` with `.iterator()`
+  - [x] Per-file: `transaction.atomic()` + `emit_event(event_type="file.expiring")`
+  - [x] Catch `IntegrityError` per file for idempotency
+  - [x] Return `{"notified", "skipped"}`
+- [x] Add `notify_expiring_files_task` to `uploads/tasks.py` (Step 14b)
+- [x] Add `"notify-expiring-files"` celery-beat entry with `crontab(minute=0)` (Step 14c)
 
-- [ ] Add `FILE_UPLOAD_EXPIRY_NOTIFY_HOURS = 1` to `Base` class in `boot/settings.py` (after `FILE_UPLOAD_ALLOWED_TYPES`)
-- [ ] Verify: `settings.FILE_UPLOAD_EXPIRY_NOTIFY_HOURS` equals `1`
+### Phase 6: Tests (Step 15)
 
-#### 5b: Notification service (Step 14a)
+- [x] `TestWebhookEndpoint` — 6 tests in `common/tests/test_models.py` (Step 15a)
+- [x] `TestComputeSignature` + `TestDeliverToEndpoint` — 8 tests in `common/tests/test_webhook.py` (Step 15b)
+- [x] Update `TestProcessPendingEvents` — 13 tests in `common/tests/test_services.py` (Step 15c)
+  - [x] Add `make_webhook_endpoint` factory fixture to `common/tests/conftest.py`
+  - [x] Update existing tests for new return format (`delivered`, `failed` keys)
+- [x] `TestCreateUploadFileOutboxEvent` — 3 tests in `uploads/tests/test_services.py` (Step 15d)
+- [x] Create `frontend/tests/__init__.py` and `frontend/tests/test_views_upload.py` (Step 15e)
+  - [x] `TestUploadViewGet` — 2 tests
+  - [x] `TestUploadViewPost` — 4 tests
+  - [x] `TestUploadViewHtmx` — 2 tests
+- [x] `TestNotifyExpiringFiles` — 5 tests in `uploads/tests/test_services.py` (Step 15f)
+- [x] `TestRetryFailedEventsAction` — 1 test in `common/tests/test_admin.py` (Step 15g)
 
-- [ ] Add imports to `uploads/services/uploads.py`: `IntegrityError` from `django.db`, `timedelta` from `datetime`, `timezone` from `django.utils`
-- [ ] Implement `notify_expiring_files(ttl_hours=None, notify_hours=None)` (per Step 14a code)
-  - [ ] Defaults from `settings.FILE_UPLOAD_TTL_HOURS` and `settings.FILE_UPLOAD_EXPIRY_NOTIFY_HOURS`
-  - [ ] Query: `UploadFile.objects.filter(status=STORED, created_at__lt=cutoff)` where `cutoff = now - (ttl_hours - notify_hours)`
-  - [ ] Iterate with `.iterator()`, emit `file.expiring` event per file in `transaction.atomic()`
-  - [ ] Payload includes `expires_at` calculated from `created_at + ttl_hours`
-  - [ ] Catch `IntegrityError` per file (idempotency — outbox unique constraint prevents duplicates)
-  - [ ] Return `{"notified": int, "skipped": int}`
-- [ ] Verify: `from uploads.services.uploads import notify_expiring_files` imports cleanly
+### Phase 7: Build & Lint (Steps 16–17)
 
-#### 5c: Notification task (Step 14b)
+- [x] Run full test suite — `python -m pytest --tb=short -q` (Step 16)
+- [ ] Recompile Tailwind CSS — `make tailwind-install && make css` (Step 17)
+  - [ ] Verify `static/css/main.css` includes new upload template classes
 
-- [ ] Add `notify_expiring_files_task` to `uploads/tasks.py` (per Step 14b code)
-  - [ ] `@shared_task(bind=True, max_retries=2, default_retry_delay=60)`
-  - [ ] Lazy import of `notify_expiring_files` service
-  - [ ] Log and return result
-- [ ] Verify: `from uploads.tasks import notify_expiring_files_task` imports cleanly
+### Phase 8: Documentation Updates (aikb Impact Map)
 
-#### 5d: Celery beat schedule (Step 14c)
+- [ ] Update `aikb/models.md` — Add `WebhookEndpoint` section (fields, Meta, `__str__`)
+- [ ] Update `aikb/services.md` — Three changes:
+  - [ ] Rewrite `process_pending_events` description (batch size 20, three-phase HTTP delivery, new return format)
+  - [ ] Add `common/services/webhook.py` section (`compute_signature`, `deliver_to_endpoint`)
+  - [ ] Update `uploads/services/uploads.py` section: `create_upload_file()` emits `file.stored`; add `notify_expiring_files()` docs
+- [ ] Update `aikb/tasks.md` — Three changes:
+  - [ ] Update `deliver_outbox_events_task` entry (batch 20, new return format)
+  - [ ] Add `notify_expiring_files_task` entry (hourly, `{"notified", "skipped"}`)
+  - [ ] Add `notify-expiring-files` to Current Schedule table
+- [ ] Update `aikb/admin.md` — Two changes:
+  - [ ] Add `WebhookEndpointAdmin` section
+  - [ ] Update `retry_failed_events` description to note `attempts=0` reset
+- [ ] Update `aikb/architecture.md` — Three changes:
+  - [ ] Add `/app/upload/` to URL routing section
+  - [ ] Update `common/` directory tree (add `services/webhook.py`, `tests/test_webhook.py`, `tests/test_admin.py`)
+  - [ ] Update `frontend/` directory tree (add `views/upload.py`, `templates/frontend/upload/`, `tests/`)
+- [ ] Update `aikb/dependencies.md` — Add `httpx >=0.27` to Production Dependencies table
+- [ ] Update `aikb/specs-roadmap.md` — Add upload views and webhook delivery to "What's Ready"; remove from "What's Not Built Yet"
+- [ ] Update `CLAUDE.md` — Four changes:
+  - [ ] Add `FILE_UPLOAD_EXPIRY_NOTIFY_HOURS` to File Upload Settings docs
+  - [ ] Add `/app/upload/` to URL Structure section
+  - [ ] Mention `notify_expiring_files_task` in Background Task Infrastructure section
+  - [ ] Add `WebhookEndpoint` and `webhook.py` to common app description
 
-- [ ] Add `"notify-expiring-files"` entry to `CELERY_BEAT_SCHEDULE` in `boot/settings.py`
-  - [ ] Task: `uploads.tasks.notify_expiring_files_task`
-  - [ ] Schedule: `crontab(minute=0)` (hourly)
-  - [ ] Queue: `default`
-- [ ] Verify: `settings.CELERY_BEAT_SCHEDULE` contains `"notify-expiring-files"` key
+### Phase 9: Final Verification
 
-### Phase 6: Testing (Step 15)
+- [ ] Run all acceptance criteria verification commands (see Final Verification → Acceptance Criteria above)
+- [ ] Run integration checks:
+  - [ ] End-to-end upload → outbox event → webhook delivery workflow
+  - [ ] Pre-expiry notification workflow
+  - [ ] Webhook delivery with no configured endpoints (no-op)
+- [ ] Run regression checks:
+  - [ ] `python manage.py check` passes
+  - [ ] `ruff check .` passes
+  - [ ] Full test suite passes
+  - [ ] Existing upload, outbox, and frontend tests unaffected
 
-#### 6a: WebhookEndpoint model tests (Step 15a)
+### Phase 10: Completion & Cleanup
 
-- [ ] Add `TestWebhookEndpoint` class to `common/tests/test_models.py`
-  - [ ] Test model creation with all fields
-  - [ ] Test `__str__` for active and inactive endpoints
-  - [ ] Test default values: `event_types=[]`, `is_active=True`
-- [ ] Verify: `pytest common/tests/test_models.py::TestWebhookEndpoint -v` passes
-
-#### 6b: Webhook delivery service tests (Step 15b)
-
-- [ ] Create `common/tests/test_webhook.py`
-  - [ ] Test `compute_signature()` with known inputs produces expected HMAC
-  - [ ] Test `deliver_to_endpoint()` with mocked 2xx response → `{"ok": True, ...}`
-  - [ ] Test `deliver_to_endpoint()` with mocked 4xx/5xx → `{"ok": False, "status_code": ..., "error": ...}`
-  - [ ] Test `deliver_to_endpoint()` with mocked network error → `{"ok": False, "status_code": None, "error": ...}`
-  - [ ] Test that correct headers are sent (`X-Webhook-Signature`, `X-Webhook-Event`, `X-Webhook-Delivery`)
-- [ ] Verify: `pytest common/tests/test_webhook.py -v` passes
-
-#### 6c: `process_pending_events()` tests (Step 15c)
-
-- [ ] Add `make_webhook_endpoint` factory fixture to `common/tests/conftest.py`
-- [ ] Update existing `TestProcessPendingEvents` tests for new return format (`delivered`, `failed` keys)
-- [ ] Add test: events delivered to matching endpoints (mock httpx)
-- [ ] Add test: events with no matching endpoints marked DELIVERED (no HTTP calls)
-- [ ] Add test: failed delivery increments `attempts` and sets `next_attempt_at` with backoff
-- [ ] Add test: events exceeding `max_attempts` transition to FAILED
-- [ ] Add test: `error_message` is populated on failure
-- [ ] Add test: inactive endpoints are excluded
-- [ ] Add test: event type matching — exact match and empty list (catch-all)
-- [ ] Verify: `pytest common/tests/test_services.py::TestProcessPendingEvents -v` passes
-
-#### 6d: `file.stored` outbox event tests (Step 15d)
-
-- [ ] Add `TestCreateUploadFileOutboxEvent` class to `uploads/tests/test_services.py`
-  - [ ] Test: successful upload emits `file.stored` event with correct payload fields
-  - [ ] Test: failed upload (e.g., oversized) does not emit event
-  - [ ] Test: idempotency key format is `"UploadFile:{pk}"`
-- [ ] Verify: `pytest uploads/tests/test_services.py::TestCreateUploadFileOutboxEvent -v` passes
-
-#### 6e: Upload view tests (Step 15e)
-
-- [ ] Create `frontend/tests/test_views_upload.py`
-  - [ ] Test: GET `/app/upload/` returns 200 for authenticated user
-  - [ ] Test: GET `/app/upload/` redirects to login for unauthenticated user
-  - [ ] Test: POST with files creates `UploadFile` and `UploadBatch` records
-  - [ ] Test: POST with no files returns error
-  - [ ] Test: POST with >10 files returns error
-  - [ ] Test: HTMX POST returns partial HTML (no redirect)
-  - [ ] Test: non-HTMX POST redirects to upload page with messages
-- [ ] Verify: `pytest frontend/tests/test_views_upload.py -v` passes
-
-#### 6f: Pre-expiry notification tests (Step 15f)
-
-- [ ] Add `TestNotifyExpiringFiles` class to `uploads/tests/test_services.py`
-  - [ ] Test: files within notification window get `file.expiring` event
-  - [ ] Test: files outside window do not get notification
-  - [ ] Test: non-STORED files are skipped
-  - [ ] Test: duplicate notification for same file is skipped (not errored)
-  - [ ] Test: event payload includes `expires_at` field
-- [ ] Verify: `pytest uploads/tests/test_services.py::TestNotifyExpiringFiles -v` passes
-
-#### 6g: Admin retry action test (Step 15g)
-
-- [ ] Create or extend `common/tests/test_admin.py`
-  - [ ] Test: retrying a failed event resets `attempts` to 0
-- [ ] Verify: `pytest common/tests/test_admin.py -v` passes
-
-### Phase 7: Verification & Polish (Steps 16–17)
-
-- [ ] Run full test suite: `python -m pytest --tb=short -q` — all tests pass
-- [ ] Run Django system check: `python manage.py check` — no issues
-- [ ] Run linter: `ruff check .` — no violations
-- [ ] Rebuild Tailwind CSS: `make css` — compiles successfully, `static/css/main.css` updated
-- [ ] Verify sidebar links render correctly (manual or test)
-
-### Phase 8: Documentation (aikb Impact Map)
-
-- [ ] Update `aikb/models.md` — Add `WebhookEndpoint` section, update Entity Relationship Summary
-- [ ] Update `aikb/services.md` — Rewrite `process_pending_events` description, add `webhook.py` section, document `file.stored` emission in `create_upload_file`, add `notify_expiring_files()`
-- [ ] Update `aikb/tasks.md` — Update `deliver_outbox_events_task` (batch=20, new return format), add `notify_expiring_files_task`, update schedule table
-- [ ] Update `aikb/admin.md` — Add `WebhookEndpointAdmin`, update `retry_failed_events` description
-- [ ] Update `aikb/architecture.md` — Add `/app/upload/` route, mention webhook delivery and pre-expiry tasks, note `httpx` dependency
-- [ ] Update `aikb/dependencies.md` — Add `httpx` to production dependencies table
-- [ ] Update `aikb/specs-roadmap.md` — Move upload UI and webhook delivery to "What's Ready"
-- [ ] Update `CLAUDE.md` — Add `FILE_UPLOAD_EXPIRY_NOTIFY_HOURS` to settings table, `/app/upload/` to URL structure, `notify_expiring_files_task` to task infrastructure, `WebhookEndpoint` to common app description
+- [ ] Add entry to `PEPs/IMPLEMENTED/LATEST.md` with PEP number, title, commit hash(es), summary
+- [ ] Remove PEP row from `PEPs/INDEX.md`
+- [ ] Delete `PEPs/PEP_0007_file_portal_pipeline/` directory
 
 ## Completion
 
@@ -1441,24 +645,24 @@ User.objects.filter(username='integ_test_0007').delete()
 
 ---
 
-## Preflight Amendment — 2026-02-27
+## Amendments
 
-Preflight validation confirmed all file paths, line numbers, function signatures, and patterns match the current codebase. Verdict: **Ready** with the following amendments:
+### Preflight Amendment — 2026-02-27
 
-### Fixes applied to plan:
+Preflight validation confirmed all file paths, line numbers, function signatures, and patterns match the current codebase. Amendments applied:
 
-1. **Step 15e prerequisite**: `frontend/tests/` directory does not exist. Must create `frontend/tests/__init__.py` before creating test files. (No other frontend tests exist currently.)
+1. **Step 15e**: `frontend/tests/` directory does not exist. Must create `frontend/tests/__init__.py` before creating test files.
+2. **Step 14a import**: Update existing `from django.db import transaction` to `from django.db import IntegrityError, transaction` (not a new import line).
+3. **Step 15c**: Existing `test_noop_when_no_pending_events` and `test_returns_correct_counts` must be updated for new return format (`delivered`, `failed` keys).
+4. **Phase 2 todo**: `DjangoJSONEncoder` already imported at `common/models.py:3` — no new import needed.
+5. **Step 9**: Use `UploadFile.Status.STORED` / `UploadFile.Status.FAILED` enum comparison instead of raw string `"stored"`.
 
-2. **Step 14a import fix**: The instruction to add `from django.db import IntegrityError` as a new line would create a duplicate import from `django.db`. Instead, update the existing line 10 of `uploads/services/uploads.py` from `from django.db import transaction` to `from django.db import IntegrityError, transaction`.
+### Plan Rewrite — 2026-02-27
 
-3. **Step 15c existing test breakage**: The return format change in `process_pending_events()` (adding `"delivered"` and `"failed"` keys) will break at least these existing assertions:
-   - `test_noop_when_no_pending_events` (line 108): `result == {"processed": 0, "remaining": 0}` must become `{"processed": 0, "delivered": 0, "failed": 0, "remaining": 0}`
-   - `test_returns_correct_counts` (lines 102-104): must add assertions for `delivered` and `failed` counts
-
-4. **Phase 2 todo list**: Remove the `DjangoJSONEncoder` import instruction — it already exists at `common/models.py:3`.
-
-5. **Step 9 style note**: The upload view uses raw string comparison (`r.status == "stored"`) instead of `UploadFile.Status.STORED`. Prefer enum constants for consistency with the service layer.
-
-### Pre-implementation prerequisite:
-
-Resolve the four "Awaiting input" open threads in `discussions.md` before starting implementation. The plan already proceeds with specific choices; they just need to be formally marked as resolved.
+Plan rewritten with exhaustive codebase-grounded analysis. All file paths, line numbers, function signatures, and patterns verified against actual codebase state. Key improvements over original plan:
+- Exact line numbers from implemented source code
+- Detailed function signatures and behavioral specifications
+- Cross-references to discussions.md design decisions
+- Specific test counts and test class names from implemented tests
+- Accurate aikb impact map with per-file descriptions and line references
+- Removed redundant Detailed Todo List (Implementation Steps are the authoritative tracking structure)

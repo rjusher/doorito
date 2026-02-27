@@ -4,7 +4,6 @@ Quick reference of all PEPs currently in the workflow. Update this table when a 
 
 | PEP  | Title                                      | Status   | Effort | Risk   | Depends On              |
 |------|--------------------------------------------|----------|--------|--------|-------------------------|
-| 0006 | S3 Upload Storage                          | Implementing | S      | Medium | —                       |
 | 0007 | File Portal Pipeline                       | Implementing | L      | High   | PEP 0006                |
 | 0008 | Canonical Domain Model for OSS Ingest Portal | Proposed | L      | High   | —                       |
 | 0009 | Storage Backend Abstraction                | Proposed | M      | Medium | PEP 0008                |
@@ -23,7 +22,6 @@ Quick reference of all PEPs currently in the workflow. Update this table when a 
 
 ```mermaid
 graph TD
-    PEP0006["🟡 0006: S3 Upload Storage"]
     PEP0007["🔴 0007: File Portal Pipeline"]
     PEP0008["🔴 0008: Canonical Domain Model"]
     PEP0009["🟡 0009: Storage Backend"]
@@ -37,8 +35,6 @@ graph TD
     PEP0017["🔴 0017: Outbox Dispatcher"]
     PEP0018["🟡 0018: OSS UI"]
     PEP0019["🟡 0019: Guardrails & Cleanup"]
-
-    PEP0006 --> PEP0007
 
     PEP0008 --> PEP0009
     PEP0008 --> PEP0010

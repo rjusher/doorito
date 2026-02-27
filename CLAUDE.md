@@ -355,9 +355,20 @@ The sidebar (`components/sidebar.html`) provides navigation with collapsible des
 ### Storage Configuration
 
 - **Static files**: WhiteNoise with `CompressedManifestStaticFilesStorage` (both environments)
-- **Media files**: Local filesystem (`MEDIA_ROOT = BASE_DIR / "media"`, `MEDIA_URL = "media/"`)
-  - Upload files stored at `media/uploads/%Y/%m/` (date-based subdirectories)
-  - `media/` directory is gitignored
+- **Media files**:
+  - **Dev**: Local filesystem via `FileSystemStorage` (`MEDIA_ROOT = BASE_DIR / "media"`, `MEDIA_URL = "media/"`)
+  - **Production**: S3-compatible storage via `django-storages[s3]` (`S3Boto3Storage`), configured through environment variables
+  - Upload files stored at `uploads/%Y/%m/` (date-based subdirectories / S3 key prefixes)
+  - `media/` directory is gitignored (Dev only)
+
+**S3 Storage Settings** (in `Base` class, used by Production only):
+- `AWS_STORAGE_BUCKET_NAME` — S3 bucket name
+- `AWS_S3_ENDPOINT_URL` — S3 endpoint (for S3-compatible providers like MinIO, R2)
+- `AWS_S3_REGION_NAME` — AWS region
+- `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` — Credentials
+- `AWS_QUERYSTRING_AUTH` — Pre-signed URLs (default: `True`)
+- `AWS_QUERYSTRING_EXPIRE` — Pre-signed URL expiration in seconds (default: `3600`)
+- `AWS_S3_FILE_OVERWRITE` — Allow file overwrite (default: `False`, preserves Django's dedup behavior)
 
 ### Background Task Infrastructure
 

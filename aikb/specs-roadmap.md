@@ -35,6 +35,7 @@ See `PEPs/ABOUT.md` for full PEP documentation and `CLAUDE.md` for the PEP lifec
 | aikb documentation system | Ready |
 | File upload infrastructure (uploads) | Ready |
 | Event outbox infrastructure (common) | Ready |
+| S3 media storage (Production) | Ready |
 
 ## What's Not Built Yet
 
@@ -44,5 +45,4 @@ Some natural next steps (each should be a PEP):
 - Workflow management (workflow models, dispatch, AI task orchestration)
 - REST API
 - Multi-tenancy / RBAC
-- S3 / cloud storage for media files
 - Production deployment (K8s, etc.)

@@ -121,15 +121,12 @@ Three lightweight tools complement Django's server-rendered architecture:
 
 ## Storage
 
-- **Development**: Local filesystem for media, WhiteNoise for static
-- **Production**: WhiteNoise for static, local filesystem for media (no S3 configured yet)
-
-## Storage
-
-- **Static files**: WhiteNoise (dev and production)
-- **Media files**: Local filesystem (`MEDIA_ROOT = BASE_DIR / "media"`, `MEDIA_URL = "media/"`)
-  - Upload files stored at `media/uploads/%Y/%m/` (date-based subdirectories)
-  - `media/` is gitignored
+- **Static files**: WhiteNoise with `CompressedManifestStaticFilesStorage` (both environments)
+- **Media files** (uploads):
+  - **Dev**: Local filesystem via `FileSystemStorage` (`MEDIA_ROOT = BASE_DIR / "media"`, `MEDIA_URL = "media/"`)
+  - **Production**: S3-compatible storage via `django-storages[s3]` (`S3Boto3Storage`). Configured through environment variables: `AWS_STORAGE_BUCKET_NAME`, `AWS_S3_ENDPOINT_URL`, `AWS_S3_REGION_NAME`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_QUERYSTRING_AUTH`, `AWS_QUERYSTRING_EXPIRE`, `AWS_S3_FILE_OVERWRITE`. Works with AWS S3, MinIO, R2, Spaces, and other S3-compatible providers.
+  - Upload files stored at `uploads/%Y/%m/` (date-based subdirectories, used as S3 key prefixes in Production)
+  - `media/` directory is gitignored (Dev only)
 
 ## Background Processing
 

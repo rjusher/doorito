@@ -52,6 +52,13 @@ uv pip install -r requirements-dev.txt
 
 Transitive dependencies (pulled by django-celery-beat): `django-timezone-field`, `python-crontab`, `cron-descriptor`, `tzdata`.
 
+### Cloud Storage
+| Package | Version | Purpose |
+|---------|---------|---------|
+| django-storages[s3] | >=1.14 | S3-compatible media file storage backend (Production) |
+
+Transitive dependency (pulled by django-storages[s3]): `boto3` (AWS SDK for S3 API calls).
+
 ### Production Server
 | Package | Version | Purpose |
 |---------|---------|---------|

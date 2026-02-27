@@ -101,6 +101,20 @@ Port is configurable via `WEB_PORT` environment variable (default 8000).
 | `CELERY_TASK_ALWAYS_EAGER` | `True` (Dev) | Sync execution in dev |
 | `CLEANUP_UPLOADS_INTERVAL_HOURS` | `6` | Hours between upload cleanup runs (crontab) |
 
+### S3 Storage (Production only)
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AWS_STORAGE_BUCKET_NAME` | (empty) | S3 bucket name for media file storage |
+| `AWS_S3_ENDPOINT_URL` | (empty) | S3 endpoint URL (for S3-compatible providers like MinIO, R2) |
+| `AWS_S3_REGION_NAME` | (empty) | AWS region name |
+| `AWS_ACCESS_KEY_ID` | (empty) | AWS access key |
+| `AWS_SECRET_ACCESS_KEY` | (empty) | AWS secret key |
+| `AWS_QUERYSTRING_AUTH` | `True` | Use pre-signed URLs (True) or direct URLs (False) |
+| `AWS_QUERYSTRING_EXPIRE` | `3600` | Pre-signed URL expiration time in seconds |
+| `AWS_S3_FILE_OVERWRITE` | `False` | Allow overwriting files with same name (False preserves Django's dedup behavior) |
+
+S3 env vars are passed to `web`, `celery-worker`, and `celery-beat` services in `docker-compose.yml`. Dev configuration uses local `FileSystemStorage` and does not require S3 variables.
+
 ### Docker Entrypoint
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -128,4 +142,7 @@ The skeleton does not include Kubernetes manifests. K8s deployment can be added 
 
 ### Static Files
 - WhiteNoise serves static files in both dev and production
-- No S3 configured (can be added via PEP)
+
+### Media Files
+- **Dev**: Local filesystem (`FileSystemStorage`)
+- **Production**: S3-compatible storage (`S3Boto3Storage` via `django-storages[s3]`). Requires `AWS_STORAGE_BUCKET_NAME` and credentials.

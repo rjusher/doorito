@@ -83,7 +83,7 @@ Validate an uploaded file's size and MIME type. Returns `(content_type, size_byt
 Compute SHA-256 hash of a file. Reads in 64 KB chunks. Seeks to start before and after hashing so the file can be saved by Django's `FileField` afterward. Returns hex-encoded hash string (64 characters).
 
 **`create_upload_file(user, file, batch=None)`**
-Validate, hash, and store an upload file. Returns an `UploadFile` instance with `status=STORED` (success, with `sha256` computed) or `status=FAILED` (validation error with `error_message` populated). Optionally associates the file with an `UploadBatch`.
+Validate, hash, and store an upload file. Returns an `UploadFile` instance with `status=STORED` (success, with `sha256` computed) or `status=FAILED` (validation error with `error_message` populated). Optionally associates the file with an `UploadBatch`. On success, emits a `file.stored` outbox event (via `emit_event()`) wrapped in `transaction.atomic()` alongside the `UploadFile.objects.create()` call. The event payload includes: `file_id`, `original_filename`, `content_type`, `size_bytes`, `sha256`, and `url` (the file's storage URL — local path in Dev, S3 URL in Production). Failed uploads do not emit events.
 
 **`mark_file_processed(upload_file)`**
 Transition an upload file from STORED to PROCESSED. Uses atomic `filter(pk=..., status=STORED).update(status=PROCESSED)` to prevent race conditions. Raises `ValueError` if the upload file is not in STORED status. Returns the refreshed `UploadFile` instance.

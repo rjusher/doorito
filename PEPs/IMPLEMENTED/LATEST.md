@@ -13,6 +13,11 @@ This file tracks all PEPs that have been fully implemented. Once a PEP is implem
 - **Summary**: Brief description of what was implemented and its impact.
 -->
 
+### PEP 0006: S3 Upload Storage
+- **Implemented**: 2026-02-27
+- **Commit(s)**: `9da4e00`
+- **Summary**: Added S3-compatible media file storage for Production using `django-storages[s3]` (with `boto3`). The `Production` settings class now uses `S3Boto3Storage` as the default storage backend, while `Dev` retains `FileSystemStorage` for local development. All S3 settings (`AWS_STORAGE_BUCKET_NAME`, `AWS_S3_ENDPOINT_URL`, `AWS_S3_REGION_NAME`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_QUERYSTRING_AUTH`, `AWS_QUERYSTRING_EXPIRE`, `AWS_S3_FILE_OVERWRITE`) are configurable via environment variables using `values.*` wrappers, compatible with any S3-compatible provider (AWS S3, MinIO, R2, Spaces). Additionally, `create_upload_file` now emits a `file.stored` outbox event (via `emit_event`) containing the file's shareable URL and metadata (`file_id`, `original_filename`, `content_type`, `size_bytes`, `sha256`, `url`) when a file is successfully stored. S3 env vars are documented in `.env.example` and passed through in `docker-compose.yml` for all three services (web, celery-worker, celery-beat). Four new tests cover outbox event emission. No database migrations required.
+
 ### PEP 0004: Event Outbox Infrastructure
 - **Implemented**: 2026-02-27
 - **Commit(s)**: `6be51f9`

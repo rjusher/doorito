@@ -4,14 +4,16 @@ Quick reference of all PEPs currently in the workflow. Update this table when a 
 
 | PEP  | Title                          | Status   | Effort | Risk   | Depends On |
 |------|--------------------------------|----------|--------|--------|------------|
-
-_(No active PEPs)_
+| 0006 | S3 Upload Storage              | Proposed | S      | Medium | —          |
+| 0007 | File Portal Pipeline           | Proposed | L      | High   | PEP 0006   |
 
 ## Dependency Graph
 
 ```mermaid
 graph TD
-    %% No active PEPs
+    PEP0006["🟡 0006: S3 Upload Storage"]
+    PEP0007["🔴 0007: File Portal Pipeline"]
+    PEP0006 --> PEP0007
 ```
 
 **Legend:** :red_circle: High risk | :yellow_circle: Medium risk | :green_circle: Low risk

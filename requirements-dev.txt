@@ -47,6 +47,16 @@ black==26.1.0 \
     --hash=sha256:f016baaadc423dc960cdddf9acae679e71ee02c4c341f78f3179d7e4819c095f \
     --hash=sha256:fb1dafbbaa3b1ee8b4550a84425aac8874e5f390200f5502cf3aee4a2acb2f14
     # via -r requirements-dev.in
+boto3==1.42.58 \
+    --hash=sha256:1bc5ff0b7a1a3f42b115481e269e1aada1d68bbfa80a989ac2882d51072907a3 \
+    --hash=sha256:3a21b5bbc8bf8d6472a7ae7bdc77819b1f86f35d127f428f4603bed1b98122c0
+    # via django-storages
+botocore==1.42.58 \
+    --hash=sha256:3098178f4404cf85c8997ebb7948b3f267cff1dd191b08fc4ebb614ac1013a20 \
+    --hash=sha256:55224d6a91afae0997e8bee62d1ef1ae2dcbc6c210516939b32a774b0b35bec5
+    # via
+    #   boto3
+    #   s3transfer
 celery==5.6.2 \
     --hash=sha256:3ffafacbe056951b629c7abcf9064c4a2366de0bdfc9fdba421b97ebb68619a5 \
     --hash=sha256:4a8921c3fcf2ad76317d3b29020772103581ed2454c4c042cc55dcc43585009b
@@ -108,6 +118,7 @@ django==5.2.11 \
     #   django-celery-results
     #   django-configurations
     #   django-htmx
+    #   django-storages
     #   django-timezone-field
 django-celery-beat==2.8.1 \
     --hash=sha256:da2b1c6939495c05a551717509d6e3b79444e114a027f7b77bf3727c2a39d171 \
@@ -124,6 +135,10 @@ django-configurations==2.5.1 \
 django-htmx==1.27.0 \
     --hash=sha256:036e5da801bfdf5f1ca815f21592cfb9f004a898f330c842f15e55c70e301a75 \
     --hash=sha256:13e1e13b87d39b57f95aae6e4987cb3df056d0b1373a41f4a94504a00298ffd8
+    # via -r requirements.in
+django-storages==1.14.6 \
+    --hash=sha256:11b7b6200e1cb5ffcd9962bd3673a39c7d6a6109e8096f0e03d46fab3d3aabd9 \
+    --hash=sha256:7a25ce8f4214f69ac9c7ce87e2603887f7ae99326c316bc8d2d75375e09341c9
     # via -r requirements.in
 django-timezone-field==7.2.1 \
     --hash=sha256:276915b72c5816f57c3baf9e43f816c695ef940d1b21f91ebf6203c09bf4ad44 \
@@ -222,6 +237,12 @@ iniconfig==2.3.0 \
     --hash=sha256:c76315c77db068650d49c5b56314774a7804df16fee4402c1f19d6d15d8c4730 \
     --hash=sha256:f631c04d2c48c52b84d0d0549c99ff3859c98df65b3101406327ecc7d53fbf12
     # via pytest
+jmespath==1.1.0 \
+    --hash=sha256:472c87d80f36026ae83c6ddd0f1d05d4e510134ed462851fd5f754c8c3cbb88d \
+    --hash=sha256:a5663118de4908c91729bea0acadca56526eb2698e83de10cd116ae0f4e97c64
+    # via
+    #   boto3
+    #   botocore
 kombu==5.6.2 \
     --hash=sha256:8060497058066c6f5aed7c26d7cd0d3b574990b09de842a8c5aaed0b92cc5a55 \
     --hash=sha256:efcfc559da324d41d61ca311b0c64965ea35b4c55cc04ee36e55386145dace93
@@ -356,7 +377,9 @@ python-crontab==3.3.0 \
 python-dateutil==2.9.0.post0 \
     --hash=sha256:37dd54208da7e1cd875388217d5e00ebd4179249f90fb72437e91a35459a0ad3 \
     --hash=sha256:a8b2bc7bffae282281c8140a97d3aa9c14da0b136dfe83f850eea9a5f7470427
-    # via celery
+    # via
+    #   botocore
+    #   celery
 python-dotenv==1.2.1 \
     --hash=sha256:42667e897e16ab0d66954af0e60a9caa94f0fd4ecf3aaf6d2d260eec1aa36ad6 \
     --hash=sha256:b81ee9561e9ca4004139c6cbba3a238c32b03e4894671e181b671e8cb8425d61
@@ -504,6 +527,10 @@ ruff==0.15.1 \
     --hash=sha256:c820fef9dd5d4172a6570e5721704a96c6679b80cf7be41659ed439653f62336 \
     --hash=sha256:da79f4d6a826caaea95de0237a67e33b81e6ec2e25fc7e1993a4015dffca7c61
     # via -r requirements-dev.in
+s3transfer==0.16.0 \
+    --hash=sha256:18e25d66fed509e3868dc1572b3f427ff947dd2c56f844a5bf09481ad3f3b2fe \
+    --hash=sha256:8e990f13268025792229cd52fa10cb7163744bf56e719e0b9cb925ab79abf920
+    # via boto3
 six==1.17.0 \
     --hash=sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274 \
     --hash=sha256:ff70335d468e7eb6ec65b95b99d3a2836546063f63acc5171de367e834932a81
@@ -595,6 +622,10 @@ tzlocal==5.3.1 \
     --hash=sha256:cceffc7edecefea1f595541dbd6e990cb1ea3d19bf01b2809f362a03dd7921fd \
     --hash=sha256:eb1a66c3ef5847adf7a834f1be0800581b683b5608e74f86ecbcef8ab91bb85d
     # via celery
+urllib3==2.6.3 \
+    --hash=sha256:1b62b6884944a57dbe321509ab94fd4d3b307075e0c2eae991ac71ee15ad38ed \
+    --hash=sha256:bf272323e553dfb2e87d9bfd225ca7b0f467b919d7bbd355436d3fd37cb0acd4
+    # via botocore
 uuid-utils==0.14.1 \
     --hash=sha256:043fb58fde6cf1620a6c066382f04f87a8e74feb0f95a585e4ed46f5d44af57b \
     --hash=sha256:0972488e3f9b449e83f006ead5a0e0a33ad4a13e4462e865b7c286ab7d7566a3 \

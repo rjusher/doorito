@@ -5,7 +5,7 @@
 | **PEP** | 0006 |
 | **Title** | S3 Upload Storage |
 | **Author** | Doorito Team |
-| **Status** | Proposed |
+| **Status** | Implementing |
 | **Risk** | Medium |
 | **Created** | 2026-02-27 |
 | **Updated** | 2026-02-27 |

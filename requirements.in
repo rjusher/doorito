@@ -33,3 +33,6 @@ django-htmx>=1.19
 
 # HTTP client (webhook delivery)
 httpx>=0.27
+
+# Cloud storage (S3-compatible backends)
+django-storages[s3]>=1.14

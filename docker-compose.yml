@@ -10,6 +10,14 @@ services:
       - CELERY_BROKER_URL=sqla+postgresql://${POSTGRES_USER:-doorito}:${POSTGRES_PASSWORD:-doorito}@db:5432/${POSTGRES_DB:-doorito}
       - RUN_MIGRATIONS=true
       - WEB_PORT=${WEB_PORT:-8000}
+      - AWS_STORAGE_BUCKET_NAME=${AWS_STORAGE_BUCKET_NAME:-}
+      - AWS_S3_ENDPOINT_URL=${AWS_S3_ENDPOINT_URL:-}
+      - AWS_S3_REGION_NAME=${AWS_S3_REGION_NAME:-}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
+      - AWS_QUERYSTRING_AUTH=${AWS_QUERYSTRING_AUTH:-True}
+      - AWS_QUERYSTRING_EXPIRE=${AWS_QUERYSTRING_EXPIRE:-3600}
+      - AWS_S3_FILE_OVERWRITE=${AWS_S3_FILE_OVERWRITE:-False}
     depends_on:
       db:
         condition: service_healthy
@@ -36,6 +44,14 @@ services:
     environment:
       - DATABASE_URL=postgres://${POSTGRES_USER:-doorito}:${POSTGRES_PASSWORD:-doorito}@db:5432/${POSTGRES_DB:-doorito}
       - CELERY_BROKER_URL=sqla+postgresql://${POSTGRES_USER:-doorito}:${POSTGRES_PASSWORD:-doorito}@db:5432/${POSTGRES_DB:-doorito}
+      - AWS_STORAGE_BUCKET_NAME=${AWS_STORAGE_BUCKET_NAME:-}
+      - AWS_S3_ENDPOINT_URL=${AWS_S3_ENDPOINT_URL:-}
+      - AWS_S3_REGION_NAME=${AWS_S3_REGION_NAME:-}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
+      - AWS_QUERYSTRING_AUTH=${AWS_QUERYSTRING_AUTH:-True}
+      - AWS_QUERYSTRING_EXPIRE=${AWS_QUERYSTRING_EXPIRE:-3600}
+      - AWS_S3_FILE_OVERWRITE=${AWS_S3_FILE_OVERWRITE:-False}
     depends_on:
       db:
         condition: service_healthy
@@ -48,6 +64,14 @@ services:
     environment:
       - DATABASE_URL=postgres://${POSTGRES_USER:-doorito}:${POSTGRES_PASSWORD:-doorito}@db:5432/${POSTGRES_DB:-doorito}
       - CELERY_BROKER_URL=sqla+postgresql://${POSTGRES_USER:-doorito}:${POSTGRES_PASSWORD:-doorito}@db:5432/${POSTGRES_DB:-doorito}
+      - AWS_STORAGE_BUCKET_NAME=${AWS_STORAGE_BUCKET_NAME:-}
+      - AWS_S3_ENDPOINT_URL=${AWS_S3_ENDPOINT_URL:-}
+      - AWS_S3_REGION_NAME=${AWS_S3_REGION_NAME:-}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
+      - AWS_QUERYSTRING_AUTH=${AWS_QUERYSTRING_AUTH:-True}
+      - AWS_QUERYSTRING_EXPIRE=${AWS_QUERYSTRING_EXPIRE:-3600}
+      - AWS_S3_FILE_OVERWRITE=${AWS_S3_FILE_OVERWRITE:-False}
     depends_on:
       db:
         condition: service_healthy

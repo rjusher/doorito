@@ -34,15 +34,15 @@ Read these files before implementation to understand existing patterns and the c
 
 ## Prerequisites
 
-- [ ] PostgreSQL database is running (required for tests): `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python manage.py check --database default`
-- [ ] Current tests pass: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -m pytest --tb=short -q`
-- [ ] PEP 0004 (Event Outbox Infrastructure) is implemented — required for `emit_event` service: `grep -q "emit_event" common/services/outbox.py && echo "OK"`
+- [x] PostgreSQL database is running (required for tests): `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python manage.py check --database default`
+- [x] Current tests pass: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -m pytest --tb=short -q`
+- [x] PEP 0004 (Event Outbox Infrastructure) is implemented — required for `emit_event` service: `grep -q "emit_event" common/services/outbox.py && echo "OK"`
 
 ## Implementation Steps
 
 ### Step 1: Add `django-storages[s3]` dependency
 
-- [ ] **Step 1a**: Add `django-storages[s3]` to `requirements.in`
+- [x] **Step 1a**: Add `django-storages[s3]` to `requirements.in`
   - Files: `requirements.in` — add new line after the `django-htmx` entry (line 32)
   - Details: Add `django-storages[s3]>=1.14` as a new section. The `[s3]` extra pulls in `boto3` automatically. No need to list `boto3` separately.
   - Content to add:
@@ -52,7 +52,7 @@ Read these files before implementation to understand existing patterns and the c
     ```
   - Verify: `grep 'django-storages\[s3\]' requirements.in`
 
-- [ ] **Step 1b**: Compile lockfiles and install
+- [x] **Step 1b**: Compile lockfiles and install
   - Files: `requirements.txt` (generated), `requirements-dev.txt` (generated)
   - Details: Run the standard `uv pip compile` workflow with `--generate-hashes`:
     ```bash
@@ -65,7 +65,7 @@ Read these files before implementation to understand existing patterns and the c
 
 ### Step 2: Configure S3 storage backend in settings
 
-- [ ] **Step 2a**: Add S3 settings to `Base` class
+- [x] **Step 2a**: Add S3 settings to `Base` class
   - Files: `boot/settings.py` — add new settings block in `Base` class after `FILE_UPLOAD_ALLOWED_TYPES` (after line 178)
   - Details: Add S3 configuration values using `values.*` wrappers consistent with existing patterns (see `CELERY_BROKER_URL` at line 121 for the `values.Value(..., environ_name=...)` pattern). All settings should have safe defaults (empty strings) so that `Dev` configuration works without S3 env vars.
   - Settings to add:
@@ -99,7 +99,7 @@ Read these files before implementation to understand existing patterns and the c
   <!-- Amendment 2026-02-27: Added AWS_S3_FILE_OVERWRITE=False per discussions.md Q1 resolution. Without this, files with the same name in the same month silently overwrite each other on S3. -->
   - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -c "from django.conf import settings; print(settings.AWS_STORAGE_BUCKET_NAME)"`
 
-- [ ] **Step 2b**: Update `Production.STORAGES` to use `S3Boto3Storage`
+- [x] **Step 2b**: Update `Production.STORAGES` to use `S3Boto3Storage`
   - Files: `boot/settings.py` — modify `Production.STORAGES` (lines 236–243)
   - Details: Replace `FileSystemStorage` with `storages.backends.s3boto3.S3Boto3Storage` for the `"default"` backend. Keep `staticfiles` backend unchanged (WhiteNoise).
   - Before:
@@ -126,14 +126,14 @@ Read these files before implementation to understand existing patterns and the c
     ```
   - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -c "from django.conf import settings; print(settings.STORAGES['default']['BACKEND'])"` should print `django.core.files.storage.FileSystemStorage` (Dev unchanged)
 
-- [ ] **Step 2c**: Verify Dev settings remain unchanged
+- [x] **Step 2c**: Verify Dev settings remain unchanged
   - Files: `boot/settings.py` — `Dev.STORAGES` (lines 206–213) must NOT be modified
   - Details: `Dev` class retains `FileSystemStorage` as the default backend. No changes to `Dev` class.
   - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -c "from django.conf import settings; assert settings.STORAGES['default']['BACKEND'] == 'django.core.files.storage.FileSystemStorage', 'Dev should use FileSystemStorage'; print('OK: Dev uses FileSystemStorage')"` and `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python manage.py check`
 
 ### Step 3: Emit outbox event on file stored
 
-- [ ] **Step 3a**: Add `emit_event` call to `create_upload_file`
+- [x] **Step 3a**: Add `emit_event` call to `create_upload_file`
   - Files: `uploads/services/uploads.py` — modify `create_upload_file()` function (lines 76–129)
   - Details: After the successful `UploadFile.objects.create(...)` call (line 111) that creates a file with `status=STORED`, wrap the creation and event emission in `transaction.atomic()` and call `emit_event()` following the pattern documented in `common/services/outbox.py` lines 28–32. The event should only be emitted for successful uploads (status=STORED), not failed ones.
   - Add import at top of file (after line 10, `from django.db import transaction`):
@@ -174,7 +174,7 @@ Read these files before implementation to understand existing patterns and the c
 
 ### Step 4: Update environment configuration files
 
-- [ ] **Step 4a**: Update `.env.example` with S3 variables
+- [x] **Step 4a**: Update `.env.example` with S3 variables
   - Files: `.env.example` — add S3 section at the end (after the Celery section, line 52)
   - Details: Add commented-out S3 environment variables with descriptions, following the existing format pattern.
   - Content to add:
@@ -192,7 +192,7 @@ Read these files before implementation to understand existing patterns and the c
     ```
   - Verify: `grep "AWS_STORAGE_BUCKET_NAME" .env.example`
 
-- [ ] **Step 4b**: Document S3 env vars in `docker-compose.yml`
+- [x] **Step 4b**: Document S3 env vars in `docker-compose.yml`
   - Files: `docker-compose.yml` — add S3 env vars to `web`, `celery-worker`, and `celery-beat` services
   - Details: Add S3 environment variables (with empty defaults so the compose file works without them for Dev). These are passed through from the host's `.env` or environment. Use the `${VAR:-}` syntax for optional variables (empty string default).
   - Add to `web.environment` (after `WEB_PORT` line):
@@ -211,7 +211,7 @@ Read these files before implementation to understand existing patterns and the c
 
 ### Step 5: Write tests for the outbox event emission
 
-- [ ] **Step 5a**: Add tests for `file.stored` outbox event in `create_upload_file`
+- [x] **Step 5a**: Add tests for `file.stored` outbox event in `create_upload_file`
   - Files: `uploads/tests/test_services.py` — add new test class `TestCreateUploadFileOutboxEvent` after `TestCreateUploadFile` (after line 123)
   - Details: Test that successful uploads emit an outbox event, and failed uploads do not. Follow existing test patterns in `uploads/tests/test_services.py` (use `user` fixture from root `conftest.py`, `SimpleUploadedFile`, `tmp_path`, `settings`). Import `OutboxEvent` from `common.models`.
   - New test class:
@@ -272,7 +272,7 @@ Read these files before implementation to understand existing patterns and the c
 
 ### Step 6: Run full test suite
 
-- [ ] **Step 6**: Verify all tests pass
+- [x] **Step 6**: Verify all tests pass
   - Details: Run the complete test suite to catch any regressions.
   - Verify: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python -m pytest --tb=short -q`
 

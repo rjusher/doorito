@@ -175,6 +175,32 @@ class Base(Configuration):
             },
         }
 
+    # S3 storage settings (used by Production for media file storage)
+    AWS_STORAGE_BUCKET_NAME = values.Value(
+        "", environ_name="AWS_STORAGE_BUCKET_NAME"
+    )
+    AWS_S3_ENDPOINT_URL = values.Value(
+        "", environ_name="AWS_S3_ENDPOINT_URL"
+    )
+    AWS_S3_REGION_NAME = values.Value(
+        "", environ_name="AWS_S3_REGION_NAME"
+    )
+    AWS_ACCESS_KEY_ID = values.Value(
+        "", environ_name="AWS_ACCESS_KEY_ID"
+    )
+    AWS_SECRET_ACCESS_KEY = values.Value(
+        "", environ_name="AWS_SECRET_ACCESS_KEY"
+    )
+    AWS_QUERYSTRING_AUTH = values.BooleanValue(
+        True, environ_name="AWS_QUERYSTRING_AUTH"
+    )
+    AWS_QUERYSTRING_EXPIRE = values.IntegerValue(
+        3600, environ_name="AWS_QUERYSTRING_EXPIRE"
+    )
+    AWS_S3_FILE_OVERWRITE = values.BooleanValue(
+        False, environ_name="AWS_S3_FILE_OVERWRITE"
+    )
+
     # File upload settings
     FILE_UPLOAD_MAX_SIZE = 52_428_800  # 50 MB
     FILE_UPLOAD_TTL_HOURS = 24
@@ -238,10 +264,10 @@ class Production(Base):
     CELERY_TASK_ALWAYS_EAGER = False
     CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
 
-    # WhiteNoise for static files
+    # S3 for media files, WhiteNoise for static files
     STORAGES = {
         "default": {
-            "BACKEND": "django.core.files.storage.FileSystemStorage",
+            "BACKEND": "storages.backends.s3boto3.S3Boto3Storage",
         },
         "staticfiles": {
             "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",

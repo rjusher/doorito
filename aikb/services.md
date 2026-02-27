@@ -35,7 +35,8 @@ def create_widget(store, name, price, created_by=None):
 
 Two apps have service modules:
 - `common/services/outbox.py` -- Outbox event emission, delivery, and cleanup
-- `uploads/services/uploads.py` -- File validation, creation, and status transitions; batch management
+- `common/services/webhook.py` -- Webhook HTTP delivery and HMAC signing
+- `uploads/services/uploads.py` -- File validation, creation, and status transitions; batch management; pre-expiry notifications
 - `uploads/services/sessions.py` -- Chunked upload session lifecycle management
 
 When adding services to a new app, follow the same pattern:
@@ -50,7 +51,7 @@ When adding services to a new app, follow the same pattern:
 
 ### common/services/outbox.py
 
-Outbox event emission and delivery services. Contains 3 functions.
+Outbox event emission and delivery services. Contains 3 functions. Constants: `DELIVERY_BATCH_SIZE = 20`, `CLEANUP_BATCH_SIZE = 1000`, `WEBHOOK_TIMEOUT = httpx.Timeout(30.0, connect=10.0)`.
 
 **`emit_event(aggregate_type, aggregate_id, event_type, payload, *, idempotency_key=None)`**
 Create an outbox event and schedule delivery. Writes the `OutboxEvent` row and registers `deliver_outbox_events_task.delay()` via `transaction.on_commit()` (wrapped in `safe_dispatch()` for eager-mode safety). Auto-generates `idempotency_key` as `f"{aggregate_type}:{aggregate_id}"` when None. Sets `next_attempt_at=timezone.now()`. Returns the created `OutboxEvent` (status=PENDING).
@@ -62,11 +63,27 @@ with transaction.atomic():
     emit_event("Something", str(obj.pk), "something.created", {...})
 ```
 
-**`process_pending_events(batch_size=100)`**
-Process pending outbox events. Queries events with `status=PENDING` and `next_attempt_at <= now()`, locks with `select_for_update(skip_locked=True)`, marks as DELIVERED. Handlers are deferred to consumer PEPs -- this implementation marks events as delivered without calling any handler. Returns `{"processed": int, "remaining": int}`.
+**`process_pending_events(batch_size=20)`**
+Process pending outbox events via webhook delivery. Uses a three-phase approach to avoid holding row locks during HTTP I/O:
+
+1. **Phase 1 (Fetch):** `transaction.atomic()` + `select_for_update(skip_locked=True)` to lock and collect up to `batch_size` pending events where `next_attempt_at <= now`. Also loads all active `WebhookEndpoint` records once for the batch.
+2. **Phase 2 (Deliver):** Outside any transaction — creates a shared `httpx.Client(timeout=WEBHOOK_TIMEOUT)` and for each event finds matching endpoints (exact event_type match; empty `event_types` list = catch-all). Calls `deliver_to_endpoint()` from `common/services/webhook.py` for each match. Events with no matching active endpoints get `all_ok=True`. Handles `SoftTimeLimitExceeded` to save progress and exit gracefully.
+3. **Phase 3 (Update):** `transaction.atomic()` — increments `attempts`, marks DELIVERED (all endpoints succeeded), FAILED (`attempts >= max_attempts`), or retries with exponential backoff (`min(60 * 2^(attempts-1), 3600)` + 10% jitter).
+
+Returns `{"processed": int, "delivered": int, "failed": int, "remaining": int}`.
 
 **`cleanup_delivered_events(retention_hours=168)`**
 Delete terminal outbox events (DELIVERED and FAILED) older than `retention_hours` (default 168 = 7 days). Batch-limited to 1000 per run. Returns `{"deleted": int, "remaining": int}`.
+
+### common/services/webhook.py
+
+Webhook HTTP delivery and HMAC-SHA256 signing. Contains 2 functions. Used by `process_pending_events()` in `common/services/outbox.py`.
+
+**`compute_signature(payload_bytes, secret)`**
+Compute HMAC-SHA256 signature for webhook payload. Uses `hmac.new(secret.encode("utf-8"), payload_bytes, hashlib.sha256).hexdigest()`. Returns hex-encoded signature string.
+
+**`deliver_to_endpoint(client, endpoint, event)`**
+Deliver an outbox event to a single webhook endpoint. Serializes `event.payload` to JSON bytes, computes HMAC signature, POSTs to `endpoint.url` with headers: `Content-Type: application/json`, `X-Webhook-Signature: {signature}`, `X-Webhook-Event: {event.event_type}`, `X-Webhook-Delivery: {event.pk}`. Returns `{"ok": bool, "status_code": int|None, "error": str}`. Handles `httpx.HTTPStatusError` (4xx/5xx) and `httpx.RequestError` (network errors/timeouts).
 
 ---
 
@@ -74,7 +91,7 @@ Delete terminal outbox events (DELIVERED and FAILED) older than `retention_hours
 
 ### uploads/services/uploads.py
 
-Upload handling services for file validation, creation, status transitions, and batch management. Contains 8 functions.
+Upload handling services for file validation, creation, status transitions, batch management, and pre-expiry notifications. Contains 9 functions.
 
 **`validate_file(file, max_size=None)`**
 Validate an uploaded file's size and MIME type. Returns `(content_type, size_bytes)` tuple. Raises `ValidationError` with code `file_too_large` or `file_type_not_allowed`. Uses `mimetypes.guess_type()` for MIME detection (extension-based, falls back to `application/octet-stream`). Checks against `settings.FILE_UPLOAD_MAX_SIZE` (default 50 MB) and `settings.FILE_UPLOAD_ALLOWED_TYPES` (`None` = accept all).
@@ -99,6 +116,9 @@ Create a new upload batch with INIT status. Returns an `UploadBatch` instance.
 
 **`finalize_batch(batch)`**
 Finalize a batch based on its files' statuses. Uses `@transaction.atomic`. Transitions to: COMPLETE (all files STORED/PROCESSED), PARTIAL (some succeeded, some failed), or FAILED (all failed or no files). Returns the updated `UploadBatch` instance.
+
+**`notify_expiring_files(ttl_hours=None, notify_hours=None)`**
+Emit `file.expiring` outbox events for files approaching TTL expiry. Queries `UploadFile.objects.filter(status=STORED, created_at__lt=cutoff)` where `cutoff = now - timedelta(hours=ttl_hours - notify_hours)`. Iterates with `.iterator()` for memory efficiency. Per file: `transaction.atomic()` + `emit_event(event_type="file.expiring")` with payload including `file_id`, `original_filename`, `content_type`, `size_bytes`, `sha256`, `url`, `expires_at`. Catches `IntegrityError` per file for idempotency (outbox unique constraint prevents duplicate notifications). Defaults from `settings.FILE_UPLOAD_TTL_HOURS` and `settings.FILE_UPLOAD_EXPIRY_NOTIFY_HOURS`. Returns `{"notified": int, "skipped": int}`.
 
 ---
 

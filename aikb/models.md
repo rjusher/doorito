@@ -51,6 +51,23 @@ Transactional outbox event for reliable at-least-once event delivery. Cross-cutt
 
 ---
 
+### WebhookEndpoint (TimeStampedModel)
+Configured webhook destination for outbox event delivery. Standalone configuration model with no FK relationships. `db_table = "webhook_endpoint"`. Defined in `common/models.py`.
+
+**Fields:**
+- `id` -- UUIDField (primary_key, default=uuid7)
+- `url` -- URLField (max_length=2048). Target URL to POST events to.
+- `secret` -- CharField (max_length=255). Shared secret for HMAC-SHA256 request signing (stored plaintext, industry standard for webhook secrets).
+- `event_types` -- JSONField (default=list, blank=True, encoder=DjangoJSONEncoder). List of event types to subscribe to (e.g., `["file.stored", "file.expiring"]`). Empty list `[]` = catch-all (matches all events). Exact match only.
+- `is_active` -- BooleanField (default=True). Toggle delivery on/off.
+- `created_at`, `updated_at` -- inherited from TimeStampedModel
+
+**Ordering:** `["-created_at"]`
+
+**`__str__`:** `f"{self.url} (active|inactive)"`
+
+---
+
 ## Utility Functions (common)
 
 ### uuid7()
@@ -213,6 +230,9 @@ User (accounts.User, extends AbstractUser)
   │           └── UploadSession (1:1, CASCADE)
   │                 └── UploadPart (via session FK, CASCADE)
   └── UploadFile (via uploaded_by FK, SET_NULL)
+
+OutboxEvent (standalone, no FKs)
+WebhookEndpoint (standalone, no FKs)
 ```
 
 All models inherit from `TimeStampedModel`. All upload models use UUID v7 primary keys via `common.utils.uuid7`. Use `MoneyField` for monetary amounts.

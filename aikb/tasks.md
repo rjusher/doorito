@@ -43,7 +43,7 @@ Two queues are configured for future use:
 
 ## Current State
 
-Two apps have task modules: `common` (outbox delivery and cleanup) and `uploads` (file cleanup). Celery autodiscovery (`boot/celery.py`) automatically discovers `tasks.py` in all `INSTALLED_APPS`. When adding tasks to a new app, create `{app}/tasks.py` and follow the conventions below.
+Two apps have task modules: `common` (outbox delivery and cleanup) and `uploads` (file cleanup and pre-expiry notifications). Celery autodiscovery (`boot/celery.py`) automatically discovers `tasks.py` in all `INSTALLED_APPS`. When adding tasks to a new app, create `{app}/tasks.py` and follow the conventions below.
 
 ---
 
@@ -53,10 +53,10 @@ Two apps have task modules: `common` (outbox delivery and cleanup) and `uploads`
 
 **`deliver_outbox_events_task`**
 - **Name**: `common.tasks.deliver_outbox_events_task`
-- **Purpose**: Delivers pending outbox events by delegating to `process_pending_events()`. Called on-demand via `transaction.on_commit()` (fast path) and periodically via celery-beat (safety net sweep).
-- **Batch limit**: 100 events per run (via `DELIVERY_BATCH_SIZE`).
+- **Purpose**: Delivers pending outbox events via HTTP POST to matching active `WebhookEndpoint` records, delegating to `process_pending_events()`. Called on-demand via `transaction.on_commit()` (fast path) and periodically via celery-beat (safety net sweep).
+- **Batch limit**: 20 events per run (via `DELIVERY_BATCH_SIZE`). Reduced from 100 to stay within `CELERY_TASK_SOFT_TIME_LIMIT` (240s) when delivering to slow endpoints.
 - **Queue**: `default`
-- **Return format**: `{"processed": int, "remaining": int}`
+- **Return format**: `{"processed": int, "delivered": int, "failed": int, "remaining": int}`
 - **Retry**: `max_retries=2`, `default_retry_delay=60`
 
 **`cleanup_delivered_outbox_events_task`**
@@ -84,6 +84,14 @@ Two apps have task modules: `common` (outbox delivery and cleanup) and `uploads`
 - **Return format**: `{"deleted": int, "remaining": int}`
 - **Retry**: `max_retries=2`, `default_retry_delay=60`
 - **Notes**: Uses lazy imports. Handles `FileNotFoundError` gracefully for already-deleted files. In Dev mode, runs synchronously via `CELERY_TASK_ALWAYS_EAGER=True`. Scheduled via celery-beat every 6 hours (at 00:00, 06:00, 12:00, 18:00 UTC) using `CLEANUP_UPLOADS_INTERVAL_HOURS` setting. Can also be invoked manually.
+
+**`notify_expiring_files_task`**
+- **Name**: `uploads.tasks.notify_expiring_files_task`
+- **Purpose**: Emit `file.expiring` outbox events for files approaching TTL expiry. Delegates to `notify_expiring_files()` service. Relies on outbox idempotency constraint to prevent duplicate notifications across sweep runs.
+- **Schedule**: `crontab(minute=0)` (hourly)
+- **Queue**: `default`
+- **Return format**: `{"notified": int, "skipped": int}`
+- **Retry**: `max_retries=2`, `default_retry_delay=60`
 
 ## Task Conventions
 
@@ -151,6 +159,7 @@ Periodic tasks are managed by `django-celery-beat` with the DatabaseScheduler, w
 | `cleanup-expired-upload-files` | `uploads.tasks.cleanup_expired_upload_files_task` | Every 6 hours (crontab) | default |
 | `deliver-outbox-events-sweep` | `common.tasks.deliver_outbox_events_task` | Every 5 minutes (timedelta) | default |
 | `cleanup-delivered-outbox-events` | `common.tasks.cleanup_delivered_outbox_events_task` | Every 6 hours at :30 (crontab) | default |
+| `notify-expiring-files` | `uploads.tasks.notify_expiring_files_task` | Every hour (crontab) | default |
 
 ### Adding a New Periodic Task
 

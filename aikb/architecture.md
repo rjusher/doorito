@@ -46,30 +46,31 @@ doorito/
 │   ├── wsgi.py         # WSGI entry point
 │   └── asgi.py         # ASGI entry point
 ├── common/         # Shared utilities and cross-cutting infrastructure
-│   ├── models.py       # TimeStampedModel (abstract), OutboxEvent
+│   ├── models.py       # TimeStampedModel (abstract), OutboxEvent, WebhookEndpoint
 │   ├── fields.py       # MoneyField (DecimalField 12,2)
 │   ├── utils.py        # uuid7(), generate_reference(), apply_date_range(), safe_dispatch()
-│   ├── admin.py        # OutboxEventAdmin
-│   ├── services/       # outbox.py (emit_event, process_pending_events, cleanup)
+│   ├── admin.py        # OutboxEventAdmin, WebhookEndpointAdmin
+│   ├── services/       # outbox.py (emit_event, process_pending_events, cleanup), webhook.py (compute_signature, deliver_to_endpoint)
 │   ├── tasks.py        # deliver_outbox_events_task, cleanup_delivered_outbox_events_task
-│   ├── tests/          # test_models.py, test_services.py, test_tasks.py
-│   ├── migrations/     # 0001_initial.py (OutboxEvent)
+│   ├── tests/          # test_models.py, test_services.py, test_tasks.py, test_webhook.py, test_admin.py
+│   ├── migrations/     # 0001_initial.py (OutboxEvent), 0002_webhookendpoint.py
 │   └── management/     # Custom management commands
 ├── accounts/       # Users and authentication
 │   ├── models.py       # User (AbstractUser)
 │   └── admin.py        # UserAdmin
-├── frontend/       # Web UI: auth + dashboard
+├── frontend/       # Web UI: auth + dashboard + upload
 │   ├── decorators.py   # @frontend_login_required
 │   ├── forms/          # auth.py (login/register forms)
-│   ├── views/          # auth.py, dashboard.py
+│   ├── views/          # auth.py, dashboard.py, upload.py
 │   ├── templatetags/   # frontend_tags.py
-│   ├── templates/      # frontend/ namespace (base, auth, dashboard, errors, components)
+│   ├── templates/      # frontend/ namespace (base, auth, dashboard, upload, errors, components)
+│   ├── tests/          # test_views_upload.py
 │   └── urls.py         # /app/ URL prefix
 ├── uploads/        # Batched, chunked file upload infrastructure
 │   ├── models.py       # UploadBatch, UploadFile, UploadSession, UploadPart (UUID v7 PKs)
 │   ├── admin.py        # UploadBatchAdmin, UploadFileAdmin, UploadSessionAdmin, UploadPartAdmin
 │   ├── services/       # uploads.py (file + batch services), sessions.py (session + part services)
-│   ├── tasks.py        # cleanup_expired_upload_files_task
+│   ├── tasks.py        # cleanup_expired_upload_files_task, notify_expiring_files_task
 │   ├── tests/          # test_models.py, test_services.py, test_sessions.py, test_tasks.py
 │   └── migrations/     # 0001_initial.py
 ├── templates/      # Project-level templates
@@ -100,6 +101,7 @@ No multi-tenancy. No RBAC system. No custom middleware beyond WhiteNoise and dja
 - `/app/` → `frontend.urls` -- Web UI (session-based auth)
   - `/app/login/`, `/app/register/`, `/app/logout/` -- Authentication
   - `/app/` -- Dashboard (requires login)
+  - `/app/upload/` -- File upload page (requires login)
 
 ## Authentication
 
@@ -133,7 +135,7 @@ Three lightweight tools complement Django's server-rendered architecture:
 See [tasks.md](tasks.md) for details.
 
 - **Celery** with PostgreSQL broker via SQLAlchemy transport (no Redis)
-- **Tasks**: `deliver_outbox_events_task` and `cleanup_delivered_outbox_events_task` (common app) -- outbox event delivery and cleanup; `cleanup_expired_upload_files_task` (uploads app) -- TTL-based cleanup of expired upload files
-- **Outbox pattern**: `emit_event()` writes events to `OutboxEvent` table in the caller's transaction, dispatches delivery via `transaction.on_commit()`. Periodic sweep via celery-beat catches missed events.
-- **Periodic scheduling**: `django-celery-beat` with DatabaseScheduler (schedules stored in PostgreSQL). Beat process dispatches tasks on configured intervals. Schedule: outbox delivery sweep every 5 min, outbox cleanup every 6 hours, upload cleanup every 6 hours.
+- **Tasks**: `deliver_outbox_events_task` and `cleanup_delivered_outbox_events_task` (common app) -- outbox event delivery via HTTP webhook and cleanup; `cleanup_expired_upload_files_task` and `notify_expiring_files_task` (uploads app) -- TTL-based cleanup and pre-expiry notifications
+- **Outbox pattern**: `emit_event()` writes events to `OutboxEvent` table in the caller's transaction, dispatches delivery via `transaction.on_commit()`. `process_pending_events()` delivers events via HTTP POST to matching active `WebhookEndpoint` records. Periodic sweep via celery-beat catches missed events.
+- **Periodic scheduling**: `django-celery-beat` with DatabaseScheduler (schedules stored in PostgreSQL). Beat process dispatches tasks on configured intervals. Schedule: outbox delivery sweep every 5 min, outbox cleanup every 6 hours, upload cleanup every 6 hours, pre-expiry notification sweep every hour.
 - **Dev mode**: `CELERY_TASK_ALWAYS_EAGER=True` (synchronous, no broker needed)

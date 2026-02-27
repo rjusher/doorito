@@ -23,11 +23,11 @@ The `aikb/` directory contains detailed contextual documentation for AI agents. 
 | File | Contents |
 |------|----------|
 | `aikb/architecture.md` | 3-app structure, request flow, template hierarchy |
-| `aikb/models.md` | User model, OutboxEvent, Upload models (UploadBatch/File/Session/Part), TimeStampedModel, MoneyField, uuid7 |
-| `aikb/services.md` | Service layer convention, outbox services (emit_event, process, cleanup), uploads services |
-| `aikb/tasks.md` | Celery configuration, task conventions, outbox delivery/cleanup tasks, upload cleanup task |
+| `aikb/models.md` | User model, OutboxEvent, WebhookEndpoint, Upload models (UploadBatch/File/Session/Part), TimeStampedModel, MoneyField, uuid7 |
+| `aikb/services.md` | Service layer convention, outbox services (emit_event, process, cleanup), webhook delivery service, uploads services |
+| `aikb/tasks.md` | Celery configuration, task conventions, outbox delivery/cleanup tasks, upload cleanup/notification tasks |
 | `aikb/signals.md` | Signal conventions (no signals yet) |
-| `aikb/admin.md` | UserAdmin, OutboxEventAdmin, Upload admin classes (Batch/File/Session/Part) |
+| `aikb/admin.md` | UserAdmin, OutboxEventAdmin, WebhookEndpointAdmin, Upload admin classes (Batch/File/Session/Part) |
 | `aikb/cli.md` | `doorito` CLI commands (hello, check) |
 | `aikb/deployment.md` | Docker, environment variables, production configuration |
 | `aikb/conventions.md` | Code patterns, naming conventions, import order |
@@ -249,7 +249,7 @@ DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev celery -A boot bea
 honcho start -f Procfile.dev
 ```
 
-Tasks defined: `deliver_outbox_events_task` and `cleanup_delivered_outbox_events_task` (common app), `cleanup_expired_upload_files_task` (uploads app) — all scheduled via celery-beat. See `aikb/tasks.md` for details and conventions.
+Tasks defined: `deliver_outbox_events_task` and `cleanup_delivered_outbox_events_task` (common app), `cleanup_expired_upload_files_task` and `notify_expiring_files_task` (uploads app) — all scheduled via celery-beat. See `aikb/tasks.md` for details and conventions.
 
 ### Docker
 
@@ -316,6 +316,7 @@ Environment is selected via `DJANGO_CONFIGURATION` env var (Dev/Production).
 - `FILE_UPLOAD_MAX_SIZE` — Maximum upload size in bytes (default: 52,428,800 = 50 MB)
 - `FILE_UPLOAD_TTL_HOURS` — Hours before expired uploads are cleaned up (default: 24)
 - `FILE_UPLOAD_ALLOWED_TYPES` — List of allowed MIME types, or `None` to accept all (default: `None`)
+- `FILE_UPLOAD_EXPIRY_NOTIFY_HOURS` — Hours before TTL expiry to emit `file.expiring` notification (default: 1)
 
 **Outbox Settings** (in `Base` class):
 - `OUTBOX_SWEEP_INTERVAL_MINUTES` — Minutes between delivery sweep runs (default: 5)
@@ -327,7 +328,7 @@ The project has 4 apps (see `aikb/architecture.md` for details):
 
 | App | Responsibility |
 |-----|---------------|
-| `common` | Shared utilities and cross-cutting infrastructure: TimeStampedModel, OutboxEvent, MoneyField, uuid7, emit_event service, delivery/cleanup tasks |
+| `common` | Shared utilities and cross-cutting infrastructure: TimeStampedModel, OutboxEvent, WebhookEndpoint, MoneyField, uuid7, emit_event service, webhook delivery service, delivery/cleanup tasks |
 | `accounts` | Custom User model (email-based, extends AbstractUser) |
 | `frontend` | Web UI: auth (login/register/logout), dashboard — server-rendered views with HTMX + Alpine.js |
 | `uploads` | Upload models (UploadBatch, UploadFile, UploadSession, UploadPart), services, admin, cleanup task |
@@ -343,6 +344,7 @@ Additional directories:
 - `/admin/` — Django admin
 - `/app/login/`, `/app/register/`, `/app/logout/` — Session-based authentication
 - `/app/` — Dashboard (requires login)
+- `/app/upload/` — File upload page (requires login)
 
 ### Frontend Web UI
 

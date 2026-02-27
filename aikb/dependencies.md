@@ -70,6 +70,13 @@ Transitive dependency (pulled by django-storages[s3]): `boto3` (AWS SDK for S3 A
 | click | >=8.0 | CLI framework for `doorito` script |
 | rich | >=13.0 | Terminal output formatting (tables, progress bars) |
 
+### HTTP Client
+| Package | Version | Purpose |
+|---------|---------|---------|
+| httpx | >=0.27 | HTTP client for webhook delivery (synchronous `httpx.Client`) |
+
+Transitive dependencies (pulled by httpx): `httpcore`, `certifi`, `idna`, `sniffio`, `anyio`, `h11`.
+
 ### Frontend
 | Package | Version | Purpose |
 |---------|---------|---------|

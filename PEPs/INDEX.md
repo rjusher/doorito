@@ -4,7 +4,6 @@ Quick reference of all PEPs currently in the workflow. Update this table when a 
 
 | PEP  | Title                                      | Status   | Effort | Risk   | Depends On              |
 |------|--------------------------------------------|----------|--------|--------|-------------------------|
-| 0007 | File Portal Pipeline                       | Implementing | L      | High   | PEP 0006                |
 | 0008 | Canonical Domain Model for OSS Ingest Portal | Proposed | L      | High   | —                       |
 | 0009 | Storage Backend Abstraction                | Proposed | M      | Medium | PEP 0008                |
 | 0010 | Authentication and API Access              | Proposed | M      | Medium | PEP 0008                |
@@ -22,7 +21,6 @@ Quick reference of all PEPs currently in the workflow. Update this table when a 
 
 ```mermaid
 graph TD
-    PEP0007["🔴 0007: File Portal Pipeline"]
     PEP0008["🔴 0008: Canonical Domain Model"]
     PEP0009["🟡 0009: Storage Backend"]
     PEP0010["🟡 0010: Auth & API Access"]

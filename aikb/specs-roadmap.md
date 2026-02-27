@@ -34,14 +34,16 @@ See `PEPs/ABOUT.md` for full PEP documentation and `CLAUDE.md` for the PEP lifec
 | PEP workflow system | Ready |
 | aikb documentation system | Ready |
 | File upload infrastructure (uploads) | Ready |
+| Upload frontend views (upload page) | Ready |
 | Event outbox infrastructure (common) | Ready |
+| Webhook delivery (outbox → HTTP POST) | Ready |
+| Pre-expiry file notifications | Ready |
 | S3 media storage (Production) | Ready |
 
 ## What's Not Built Yet
 
 Some natural next steps (each should be a PEP):
 
-- Upload frontend views (forms, templates, URL routes for file upload UI)
 - Workflow management (workflow models, dispatch, AI task orchestration)
 - REST API
 - Multi-tenancy / RBAC

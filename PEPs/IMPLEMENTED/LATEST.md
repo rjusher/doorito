@@ -13,6 +13,11 @@ This file tracks all PEPs that have been fully implemented. Once a PEP is implem
 - **Summary**: Brief description of what was implemented and its impact.
 -->
 
+### PEP 0007: File Portal Pipeline
+- **Implemented**: 2026-02-27
+- **Commit(s)**: `ee97a2b`
+- **Summary**: Implemented the end-to-end file portal pipeline connecting upload infrastructure, outbox events, and webhook delivery into a working system. Added a `WebhookEndpoint` model (`common/models.py`) for configuring webhook destinations with URL, HMAC-SHA256 secret, event type filtering, and active/inactive toggle. Created `common/services/webhook.py` with `compute_signature()` and `deliver_to_endpoint()` for HTTP POST delivery with `X-Webhook-Signature`, `X-Webhook-Event`, and `X-Webhook-Delivery` headers. Rewrote `process_pending_events()` with a three-phase approach (fetch with row locks, deliver via HTTP outside transactions, update results) supporting exponential backoff with jitter, `SoftTimeLimitExceeded` handling, and batch size of 20. Added an upload page at `/app/upload/` with drag-and-drop interface using Alpine.js and HTMX for file upload via `create_upload_file()` service. `create_upload_file()` now emits `file.stored` outbox events on success. Added `notify_expiring_files()` service and hourly `notify_expiring_files_task` to emit `file.expiring` events before TTL-based file cleanup, with idempotency via the outbox unique constraint. Fixed `retry_failed_events` admin action to reset `attempts=0`. Added `httpx>=0.27` dependency, `FILE_UPLOAD_EXPIRY_NOTIFY_HOURS` setting, `WebhookEndpointAdmin`, sidebar upload navigation links, and 39 new tests (119 total).
+
 ### PEP 0006: S3 Upload Storage
 - **Implemented**: 2026-02-27
 - **Commit(s)**: `9da4e00`

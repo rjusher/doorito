@@ -4,7 +4,7 @@ Quick reference of all PEPs currently in the workflow. Update this table when a 
 
 | PEP  | Title                          | Status   | Effort | Risk   | Depends On |
 |------|--------------------------------|----------|--------|--------|------------|
-| 0004 | Event Outbox Infrastructure     | Proposed | M      | Medium | PEP 0003, PEP 0005 (implemented)  |
+| 0004 | Event Outbox Infrastructure     | Implementing | M      | Medium | PEP 0003, PEP 0005 (implemented)  |
 
 ## Dependency Graph
 

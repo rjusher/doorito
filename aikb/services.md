@@ -33,7 +33,8 @@ def create_widget(store, name, price, created_by=None):
 
 ## Current State
 
-The `uploads` app has two service modules, separated by domain concern:
+Two apps have service modules:
+- `common/services/outbox.py` -- Outbox event emission, delivery, and cleanup
 - `uploads/services/uploads.py` -- File validation, creation, and status transitions; batch management
 - `uploads/services/sessions.py` -- Chunked upload session lifecycle management
 
@@ -42,6 +43,30 @@ When adding services to a new app, follow the same pattern:
 1. Create `{app}/services/__init__.py`
 2. Create `{app}/services/{domain}.py` with the service functions
 3. Import and call from views, admin, CLI, and tasks
+
+---
+
+## Common App
+
+### common/services/outbox.py
+
+Outbox event emission and delivery services. Contains 3 functions.
+
+**`emit_event(aggregate_type, aggregate_id, event_type, payload, *, idempotency_key=None)`**
+Create an outbox event and schedule delivery. Writes the `OutboxEvent` row and registers `deliver_outbox_events_task.delay()` via `transaction.on_commit()` (wrapped in `safe_dispatch()` for eager-mode safety). Auto-generates `idempotency_key` as `f"{aggregate_type}:{aggregate_id}"` when None. Sets `next_attempt_at=timezone.now()`. Returns the created `OutboxEvent` (status=PENDING).
+
+**Transactional usage pattern:** Callers should wrap both the state change and `emit_event()` in the same `transaction.atomic()` block:
+```python
+with transaction.atomic():
+    obj = create_something(...)
+    emit_event("Something", str(obj.pk), "something.created", {...})
+```
+
+**`process_pending_events(batch_size=100)`**
+Process pending outbox events. Queries events with `status=PENDING` and `next_attempt_at <= now()`, locks with `select_for_update(skip_locked=True)`, marks as DELIVERED. Handlers are deferred to consumer PEPs -- this implementation marks events as delivered without calling any handler. Returns `{"processed": int, "remaining": int}`.
+
+**`cleanup_delivered_events(retention_hours=168)`**
+Delete terminal outbox events (DELIVERED and FAILED) older than `retention_hours` (default 168 = 7 days). Batch-limited to 1000 per run. Returns `{"deleted": int, "remaining": int}`.
 
 ---
 

@@ -45,10 +45,15 @@ doorito/
 │   ├── celery.py       # Celery app setup (configurations.setup() integration)
 │   ├── wsgi.py         # WSGI entry point
 │   └── asgi.py         # ASGI entry point
-├── common/         # Shared utilities (no models of its own beyond abstract)
-│   ├── models.py       # TimeStampedModel (abstract)
+├── common/         # Shared utilities and cross-cutting infrastructure
+│   ├── models.py       # TimeStampedModel (abstract), OutboxEvent
 │   ├── fields.py       # MoneyField (DecimalField 12,2)
-│   ├── utils.py        # generate_reference(), apply_date_range(), safe_dispatch()
+│   ├── utils.py        # uuid7(), generate_reference(), apply_date_range(), safe_dispatch()
+│   ├── admin.py        # OutboxEventAdmin
+│   ├── services/       # outbox.py (emit_event, process_pending_events, cleanup)
+│   ├── tasks.py        # deliver_outbox_events_task, cleanup_delivered_outbox_events_task
+│   ├── tests/          # test_models.py, test_services.py, test_tasks.py
+│   ├── migrations/     # 0001_initial.py (OutboxEvent)
 │   └── management/     # Custom management commands
 ├── accounts/       # Users and authentication
 │   ├── models.py       # User (AbstractUser)
@@ -131,6 +136,7 @@ Three lightweight tools complement Django's server-rendered architecture:
 See [tasks.md](tasks.md) for details.
 
 - **Celery** with PostgreSQL broker via SQLAlchemy transport (no Redis)
-- **Tasks**: `cleanup_expired_upload_files_task` (uploads app) -- TTL-based cleanup of expired upload files
-- **Periodic scheduling**: `django-celery-beat` with DatabaseScheduler (schedules stored in PostgreSQL). Beat process dispatches tasks on configured intervals. Initial schedule: upload cleanup every 6 hours.
+- **Tasks**: `deliver_outbox_events_task` and `cleanup_delivered_outbox_events_task` (common app) -- outbox event delivery and cleanup; `cleanup_expired_upload_files_task` (uploads app) -- TTL-based cleanup of expired upload files
+- **Outbox pattern**: `emit_event()` writes events to `OutboxEvent` table in the caller's transaction, dispatches delivery via `transaction.on_commit()`. Periodic sweep via celery-beat catches missed events.
+- **Periodic scheduling**: `django-celery-beat` with DatabaseScheduler (schedules stored in PostgreSQL). Beat process dispatches tasks on configured intervals. Schedule: outbox delivery sweep every 5 min, outbox cleanup every 6 hours, upload cleanup every 6 hours.
 - **Dev mode**: `CELERY_TASK_ALWAYS_EAGER=True` (synchronous, no broker needed)

@@ -18,7 +18,24 @@ The only accounts admin class. Uses Django's built-in `UserAdmin` with no custom
 
 - **URL**: `/admin/`
 - **Auth**: Django's built-in superuser/staff authentication
-- **Models visible**: User, UploadBatch, UploadFile, UploadSession, UploadPart
+- **Models visible**: User, OutboxEvent, UploadBatch, UploadFile, UploadSession, UploadPart
+
+### common/admin.py
+
+One admin class registered for the outbox event model:
+
+```python
+@admin.register(OutboxEvent)
+class OutboxEventAdmin(admin.ModelAdmin):
+    list_display = ("event_type", "aggregate_type", "aggregate_id", "status", "attempts", "next_attempt_at", "created_at")
+    list_filter = ("status", "event_type", "aggregate_type", "created_at")
+    search_fields = ("event_type", "aggregate_type", "aggregate_id", "idempotency_key")
+    readonly_fields = ("pk", "aggregate_type", "aggregate_id", "event_type", "payload", "idempotency_key", "attempts", "delivered_at", "error_message", "created_at", "updated_at")
+    date_hierarchy = "created_at"
+    actions = ["retry_failed_events"]
+```
+
+**Custom action:** `retry_failed_events` -- resets selected FAILED events to PENDING with `next_attempt_at=now()` and clears `error_message`, making them eligible for the next delivery sweep.
 
 ### uploads/admin.py
 

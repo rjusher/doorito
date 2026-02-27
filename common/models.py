@@ -1,6 +1,9 @@
 """Shared abstract base models used across all apps."""
 
+from django.core.serializers.json import DjangoJSONEncoder
 from django.db import models
+
+from common.utils import uuid7
 
 
 class TimeStampedModel(models.Model):
@@ -11,3 +14,54 @@ class TimeStampedModel(models.Model):
 
     class Meta:
         abstract = True
+
+
+class OutboxEvent(TimeStampedModel):
+    """Transactional outbox event for reliable at-least-once delivery.
+
+    Status lifecycle:
+        pending → delivered (success)
+        pending → ... retry ... → failed (max retries exhausted)
+    """
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending"
+        DELIVERED = "delivered", "Delivered"
+        FAILED = "failed", "Failed"
+
+    id = models.UUIDField(primary_key=True, default=uuid7, editable=False)
+    aggregate_type = models.CharField(max_length=100)
+    aggregate_id = models.CharField(max_length=100)
+    event_type = models.CharField(max_length=100)
+    payload = models.JSONField(default=dict, encoder=DjangoJSONEncoder)
+    status = models.CharField(
+        max_length=20, choices=Status.choices, default=Status.PENDING
+    )
+    idempotency_key = models.CharField(max_length=255)
+    attempts = models.PositiveIntegerField(default=0)
+    max_attempts = models.PositiveIntegerField(default=5)
+    next_attempt_at = models.DateTimeField(null=True)
+    delivered_at = models.DateTimeField(null=True, blank=True)
+    error_message = models.TextField(blank=True)
+
+    class Meta:
+        db_table = "outbox_event"
+        verbose_name = "outbox event"
+        verbose_name_plural = "outbox events"
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(
+                fields=["next_attempt_at"],
+                condition=models.Q(status="pending"),
+                name="idx_outbox_pending_next",
+            ),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["event_type", "idempotency_key"],
+                name="unique_event_type_idempotency_key",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.event_type} ({self.get_status_display()})"

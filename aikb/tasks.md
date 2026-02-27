@@ -43,7 +43,30 @@ Two queues are configured for future use:
 
 ## Current State
 
-The first task module exists in the `uploads` app. Celery autodiscovery (`boot/celery.py`) automatically discovers `tasks.py` in all `INSTALLED_APPS`. When adding tasks to a new app, create `{app}/tasks.py` and follow the conventions below.
+Two apps have task modules: `common` (outbox delivery and cleanup) and `uploads` (file cleanup). Celery autodiscovery (`boot/celery.py`) automatically discovers `tasks.py` in all `INSTALLED_APPS`. When adding tasks to a new app, create `{app}/tasks.py` and follow the conventions below.
+
+---
+
+## Common App
+
+### common/tasks.py
+
+**`deliver_outbox_events_task`**
+- **Name**: `common.tasks.deliver_outbox_events_task`
+- **Purpose**: Delivers pending outbox events by delegating to `process_pending_events()`. Called on-demand via `transaction.on_commit()` (fast path) and periodically via celery-beat (safety net sweep).
+- **Batch limit**: 100 events per run (via `DELIVERY_BATCH_SIZE`).
+- **Queue**: `default`
+- **Return format**: `{"processed": int, "remaining": int}`
+- **Retry**: `max_retries=2`, `default_retry_delay=60`
+
+**`cleanup_delivered_outbox_events_task`**
+- **Name**: `common.tasks.cleanup_delivered_outbox_events_task`
+- **Purpose**: Deletes terminal outbox events (DELIVERED and FAILED) older than `OUTBOX_RETENTION_HOURS` (default 168 = 7 days).
+- **Batch limit**: 1000 events per run (via `CLEANUP_BATCH_SIZE`).
+- **Settings read**: `OUTBOX_RETENTION_HOURS` (via `getattr` with 168-hour default)
+- **Queue**: `default`
+- **Return format**: `{"deleted": int, "remaining": int}`
+- **Retry**: `max_retries=2`, `default_retry_delay=60`
 
 ---
 
@@ -126,6 +149,8 @@ Periodic tasks are managed by `django-celery-beat` with the DatabaseScheduler, w
 | Task Name | Task Path | Schedule | Queue |
 |-----------|-----------|----------|-------|
 | `cleanup-expired-upload-files` | `uploads.tasks.cleanup_expired_upload_files_task` | Every 6 hours (crontab) | default |
+| `deliver-outbox-events-sweep` | `common.tasks.deliver_outbox_events_task` | Every 5 minutes (timedelta) | default |
+| `cleanup-delivered-outbox-events` | `common.tasks.cleanup_delivered_outbox_events_task` | Every 6 hours at :30 (crontab) | default |
 
 ### Adding a New Periodic Task
 

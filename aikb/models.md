@@ -12,6 +12,45 @@ Abstract model inherited by most models in the project. Defined in `common/model
 ### MoneyField
 Custom DecimalField (max_digits=12, decimal_places=2, default=0.00) for monetary amounts. Defined in `common/fields.py`. Includes a `MinValueValidator(0.00)` by default. Reports itself as a plain `DecimalField` in `deconstruct()` to avoid migration churn.
 
+## Common App
+
+### OutboxEvent (TimeStampedModel)
+Transactional outbox event for reliable at-least-once event delivery. Cross-cutting infrastructure used by any app. `db_table = "outbox_event"`. Defined in `common/models.py`.
+
+**Fields:**
+- `id` -- UUIDField (primary_key, default=uuid7)
+- `aggregate_type` -- CharField (max_length=100). Model name of the source record (e.g., "UploadFile", "User").
+- `aggregate_id` -- CharField (max_length=100). String PK of the source record.
+- `event_type` -- CharField (max_length=100). Dotted event name (e.g., "file.stored", "user.created").
+- `payload` -- JSONField (default=dict, encoder=DjangoJSONEncoder). Event data, handles UUID/datetime/Decimal.
+- `status` -- CharField (max_length=20, choices=Status.choices, default=PENDING)
+- `idempotency_key` -- CharField (max_length=255). Deduplication key.
+- `attempts` -- PositiveIntegerField (default=0). Delivery attempt counter.
+- `max_attempts` -- PositiveIntegerField (default=5). Maximum delivery attempts before FAILED.
+- `next_attempt_at` -- DateTimeField (null=True). When event is eligible for next delivery attempt; null when terminal.
+- `delivered_at` -- DateTimeField (null=True, blank=True). Set on successful delivery.
+- `error_message` -- TextField (blank). Last error message (overwritten on retry).
+- `created_at`, `updated_at` -- inherited from TimeStampedModel
+
+**Status Choices (OutboxEvent.Status):**
+- `PENDING` ("pending") -- Awaiting delivery (initial or retrying). `attempts > 0` with `error_message` indicates retry.
+- `DELIVERED` ("delivered") -- Successfully processed (terminal). `delivered_at` set, `next_attempt_at` null.
+- `FAILED` ("failed") -- Max retries exhausted (terminal). `next_attempt_at` null.
+
+**Status lifecycle:** `pending → delivered` (success) or `pending → ... retry ... → failed` (max retries exhausted)
+
+**Indexes:**
+- Partial index: `["next_attempt_at"]` WHERE `status='pending'` (name: `idx_outbox_pending_next`) -- optimizes delivery poll query
+
+**Constraints:**
+- `UniqueConstraint(fields=["event_type", "idempotency_key"], name="unique_event_type_idempotency_key")` -- prevents duplicate events
+
+**Ordering:** `["-created_at"]`
+
+**`__str__`:** `f"{self.event_type} ({self.get_status_display()})"`
+
+---
+
 ## Utility Functions (common)
 
 ### uuid7()

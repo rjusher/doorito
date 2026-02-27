@@ -140,8 +140,14 @@ class Base(Configuration):
     CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"
     CLEANUP_UPLOADS_INTERVAL_HOURS = 6  # Valid range: 1-24
 
+    # Outbox settings
+    OUTBOX_SWEEP_INTERVAL_MINUTES = 5  # Sweep for pending events
+    OUTBOX_RETENTION_HOURS = 168  # 7 days retention for terminal events
+
     @property
     def CELERY_BEAT_SCHEDULE(self):
+        from datetime import timedelta
+
         from celery.schedules import crontab
 
         return {
@@ -150,6 +156,16 @@ class Base(Configuration):
                 "schedule": crontab(
                     minute=0, hour=f"*/{self.CLEANUP_UPLOADS_INTERVAL_HOURS}"
                 ),
+                "options": {"queue": "default"},
+            },
+            "deliver-outbox-events-sweep": {
+                "task": "common.tasks.deliver_outbox_events_task",
+                "schedule": timedelta(minutes=self.OUTBOX_SWEEP_INTERVAL_MINUTES),
+                "options": {"queue": "default"},
+            },
+            "cleanup-delivered-outbox-events": {
+                "task": "common.tasks.cleanup_delivered_outbox_events_task",
+                "schedule": crontab(minute=30, hour="*/6"),
                 "options": {"queue": "default"},
             },
         }

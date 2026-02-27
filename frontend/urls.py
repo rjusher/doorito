@@ -6,7 +6,7 @@ All URLs are mounted under /app/ in boot/urls.py.
 
 from django.urls import path
 
-from frontend.views import auth, dashboard
+from frontend.views import auth, dashboard, upload
 
 app_name = "frontend"
 
@@ -17,4 +17,6 @@ urlpatterns = [
     path("logout/", auth.logout_view, name="logout"),
     # Dashboard
     path("", dashboard.dashboard_view, name="dashboard"),
+    # Upload
+    path("upload/", upload.upload_view, name="upload"),
 ]

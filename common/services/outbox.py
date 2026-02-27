@@ -1,8 +1,11 @@
 """Outbox event emission and delivery services."""
 
 import logging
+import random
 from datetime import timedelta
 
+import httpx
+from celery.exceptions import SoftTimeLimitExceeded
 from django.db import transaction
 from django.utils import timezone
 
@@ -11,8 +14,9 @@ from common.utils import safe_dispatch
 
 logger = logging.getLogger(__name__)
 
-DELIVERY_BATCH_SIZE = 100
+DELIVERY_BATCH_SIZE = 20
 CLEANUP_BATCH_SIZE = 1000
+WEBHOOK_TIMEOUT = httpx.Timeout(30.0, connect=10.0)
 
 
 def emit_event(
@@ -75,23 +79,28 @@ def emit_event(
 
 
 def process_pending_events(batch_size=DELIVERY_BATCH_SIZE):
-    """Process pending outbox events.
+    """Process pending outbox events via webhook delivery.
 
-    Queries events with status=PENDING and next_attempt_at <= now(),
-    locks them with select_for_update(skip_locked=True) for concurrency
-    safety, and marks them as DELIVERED.
+    Three-phase approach to avoid holding row locks during HTTP I/O:
+    1. Fetch: lock and collect pending events
+    2. Deliver: POST to matching webhook endpoints (no DB locks)
+    3. Update: write delivery results back to the database
 
-    Note: Handlers are deferred to consumer PEPs. This implementation
-    marks events as delivered without calling any handler.
+    Events with no matching active endpoints are marked DELIVERED.
+    On delivery failure, events are retried with exponential backoff.
+    Events exceeding max_attempts are marked FAILED.
 
     Args:
-        batch_size: Maximum number of events to process per call.
+        batch_size: Maximum events to process per call.
 
     Returns:
-        dict: {"processed": int, "remaining": int}
+        dict: {"processed": int, "delivered": int, "failed": int, "remaining": int}
     """
+    from common.models import WebhookEndpoint
+
     now = timezone.now()
 
+    # Phase 1: Fetch pending events (short transaction, releases locks)
     with transaction.atomic():
         events = list(
             OutboxEvent.objects.filter(
@@ -100,15 +109,90 @@ def process_pending_events(batch_size=DELIVERY_BATCH_SIZE):
             ).select_for_update(skip_locked=True)[:batch_size]
         )
 
+    if not events:
+        remaining = OutboxEvent.objects.filter(
+            status=OutboxEvent.Status.PENDING,
+        ).count()
+        return {"processed": 0, "delivered": 0, "failed": 0, "remaining": remaining}
+
+    # Load active endpoints once for the batch
+    endpoints = list(WebhookEndpoint.objects.filter(is_active=True))
+
+    # Phase 2: Deliver (no transaction, no locks)
+    results = {}  # event.pk -> {"all_ok": bool, "error": str}
+    try:
+        with httpx.Client(timeout=WEBHOOK_TIMEOUT) as client:
+            for event in events:
+                matching = [
+                    ep
+                    for ep in endpoints
+                    if not ep.event_types or event.event_type in ep.event_types
+                ]
+
+                if not matching:
+                    # No matching endpoints — mark as delivered (no-op)
+                    results[event.pk] = {"all_ok": True, "error": ""}
+                    continue
+
+                from common.services.webhook import deliver_to_endpoint
+
+                errors = []
+                for ep in matching:
+                    result = deliver_to_endpoint(client, ep, event)
+                    if not result["ok"]:
+                        errors.append(f"{ep.url}: {result['error']}")
+
+                results[event.pk] = {
+                    "all_ok": len(errors) == 0,
+                    "error": "; ".join(errors),
+                }
+    except SoftTimeLimitExceeded:
+        logger.warning(
+            "Soft time limit reached during webhook delivery, "
+            "saving progress for %d/%d events.",
+            len(results),
+            len(events),
+        )
+
+    # Phase 3: Update event statuses (short transaction)
+    delivered_count = 0
+    failed_count = 0
+    now = timezone.now()
+
+    with transaction.atomic():
         for event in events:
-            event.status = OutboxEvent.Status.DELIVERED
-            event.delivered_at = now
-            event.next_attempt_at = None
+            if event.pk not in results:
+                # Not processed (soft time limit hit) — skip, will retry next sweep
+                continue
+
+            r = results[event.pk]
+            event.attempts += 1
+
+            if r["all_ok"]:
+                event.status = OutboxEvent.Status.DELIVERED
+                event.delivered_at = now
+                event.next_attempt_at = None
+                event.error_message = ""
+                delivered_count += 1
+            elif event.attempts >= event.max_attempts:
+                event.status = OutboxEvent.Status.FAILED
+                event.next_attempt_at = None
+                event.error_message = r["error"]
+                failed_count += 1
+            else:
+                # Retry with exponential backoff + jitter
+                delay = min(60 * (2 ** (event.attempts - 1)), 3600)
+                jitter = random.uniform(0, delay * 0.1)
+                event.next_attempt_at = now + timedelta(seconds=delay + jitter)
+                event.error_message = r["error"]
+
             event.save(
                 update_fields=[
                     "status",
+                    "attempts",
                     "delivered_at",
                     "next_attempt_at",
+                    "error_message",
                     "updated_at",
                 ]
             )
@@ -117,7 +201,12 @@ def process_pending_events(batch_size=DELIVERY_BATCH_SIZE):
         status=OutboxEvent.Status.PENDING,
     ).count()
 
-    return {"processed": len(events), "remaining": remaining}
+    return {
+        "processed": len(results),
+        "delivered": delivered_count,
+        "failed": failed_count,
+        "remaining": remaining,
+    }
 
 
 def cleanup_delivered_events(retention_hours=168):

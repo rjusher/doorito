@@ -1,0 +1,47 @@
+{% if error %}
+<div class="rounded-lg p-4 text-sm bg-danger-50 text-danger-700 border border-danger-200">
+  {{ error }}
+</div>
+{% else %}
+<div class="rounded-lg border border-neutral-200 bg-white">
+  <div class="px-4 py-3 border-b border-neutral-200">
+    <h3 class="text-sm font-medium text-neutral-900">
+      Upload Results
+      {% if failed_count == 0 %}
+        <span class="ml-2 text-success-600">All {{ stored_count }} file(s) stored</span>
+      {% elif stored_count > 0 %}
+        <span class="ml-2 text-warning-600">{{ stored_count }} stored, {{ failed_count }} failed</span>
+      {% else %}
+        <span class="ml-2 text-danger-600">All {{ failed_count }} file(s) failed</span>
+      {% endif %}
+    </h3>
+  </div>
+  <ul class="divide-y divide-neutral-200">
+    {% for upload in results %}
+    <li class="px-4 py-3 flex items-center justify-between">
+      <div class="flex items-center gap-2 min-w-0">
+        <svg class="w-4 h-4 shrink-0
+          {% if upload.status == 'stored' %}text-success-500
+          {% elif upload.status == 'failed' %}text-danger-500
+          {% else %}text-neutral-400{% endif %}"
+          xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+          {% if upload.status == 'stored' %}
+          <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+          {% elif upload.status == 'failed' %}
+          <path stroke-linecap="round" stroke-linejoin="round" d="m9.75 9.75 4.5 4.5m0-4.5-4.5 4.5M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+          {% endif %}
+        </svg>
+        <span class="text-sm text-neutral-700 truncate">{{ upload.original_filename }}</span>
+      </div>
+      <div class="text-xs text-neutral-400 shrink-0 ml-4">
+        {% if upload.status == 'stored' %}
+          {{ upload.size_bytes|filesizeformat }}
+        {% elif upload.status == 'failed' %}
+          <span class="text-danger-500">{{ upload.error_message }}</span>
+        {% endif %}
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}

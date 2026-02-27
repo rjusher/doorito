@@ -3,7 +3,7 @@
 from django.contrib import admin
 from django.utils import timezone
 
-from common.models import OutboxEvent
+from common.models import OutboxEvent, WebhookEndpoint
 
 
 @admin.register(OutboxEvent)
@@ -44,5 +44,17 @@ class OutboxEventAdmin(admin.ModelAdmin):
             status=OutboxEvent.Status.PENDING,
             next_attempt_at=timezone.now(),
             error_message="",
+            attempts=0,
         )
         self.message_user(request, f"{updated} event(s) reset for retry.")
+
+
+@admin.register(WebhookEndpoint)
+class WebhookEndpointAdmin(admin.ModelAdmin):
+    """Admin interface for webhook endpoint configuration."""
+
+    list_display = ("url", "is_active", "event_types", "created_at")
+    list_filter = ("is_active", "created_at")
+    search_fields = ("url",)
+    readonly_fields = ("pk", "created_at", "updated_at")
+    date_hierarchy = "created_at"

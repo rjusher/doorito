@@ -5,7 +5,7 @@ Quick reference of all PEPs currently in the workflow. Update this table when a 
 | PEP  | Title                                      | Status   | Effort | Risk   | Depends On              |
 |------|--------------------------------------------|----------|--------|--------|-------------------------|
 | 0006 | S3 Upload Storage                          | Proposed | S      | Medium | —                       |
-| 0007 | File Portal Pipeline                       | Proposed | L      | High   | PEP 0006                |
+| 0007 | File Portal Pipeline                       | Implementing | L      | High   | PEP 0006                |
 | 0008 | Canonical Domain Model for OSS Ingest Portal | Proposed | L      | High   | —                       |
 | 0009 | Storage Backend Abstraction                | Proposed | M      | Medium | PEP 0008                |
 | 0010 | Authentication and API Access              | Proposed | M      | Medium | PEP 0008                |

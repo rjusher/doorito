@@ -25,12 +25,14 @@ class TestDeliverOutboxEventsTask:
 
     def test_noop_when_no_pending_events(self):
         result = deliver_outbox_events_task()
-        assert result == {"processed": 0, "remaining": 0}
+        assert result == {"processed": 0, "delivered": 0, "failed": 0, "remaining": 0}
 
     def test_returns_result_dict(self, make_outbox_event):
         make_outbox_event()
         result = deliver_outbox_events_task()
         assert "processed" in result
+        assert "delivered" in result
+        assert "failed" in result
         assert "remaining" in result
 
 

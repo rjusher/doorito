@@ -4,10 +4,13 @@ import contextlib
 import hashlib
 import logging
 import mimetypes
+from datetime import timedelta
 
+from common.services.outbox import emit_event
 from django.conf import settings
 from django.core.exceptions import ValidationError
-from django.db import transaction
+from django.db import IntegrityError, transaction
+from django.utils import timezone
 
 from uploads.models import UploadBatch, UploadFile
 
@@ -108,16 +111,30 @@ def create_upload_file(user, file, batch=None):
 
     sha256 = compute_sha256(file)
 
-    upload = UploadFile.objects.create(
-        uploaded_by=user,
-        file=file,
-        original_filename=file.name,
-        content_type=content_type,
-        size_bytes=size_bytes,
-        sha256=sha256,
-        batch=batch,
-        status=UploadFile.Status.STORED,
-    )
+    with transaction.atomic():
+        upload = UploadFile.objects.create(
+            uploaded_by=user,
+            file=file,
+            original_filename=file.name,
+            content_type=content_type,
+            size_bytes=size_bytes,
+            sha256=sha256,
+            batch=batch,
+            status=UploadFile.Status.STORED,
+        )
+        emit_event(
+            aggregate_type="UploadFile",
+            aggregate_id=str(upload.pk),
+            event_type="file.stored",
+            payload={
+                "file_id": str(upload.pk),
+                "original_filename": upload.original_filename,
+                "content_type": upload.content_type,
+                "size_bytes": upload.size_bytes,
+                "sha256": upload.sha256,
+                "url": upload.file.url,
+            },
+        )
     logger.info(
         "Upload file created: pk=%s user=%s file=%s size=%d sha256=%s",
         upload.pk,
@@ -252,3 +269,62 @@ def finalize_batch(batch):
     batch.save(update_fields=["status", "updated_at"])
     logger.info("Upload batch finalized: pk=%s status=%s", batch.pk, batch.status)
     return batch
+
+
+def notify_expiring_files(ttl_hours=None, notify_hours=None):
+    """Emit file.expiring events for files approaching TTL expiry.
+
+    Queries files with status=STORED that are within notify_hours of
+    their TTL expiry. Relies on the outbox idempotency constraint
+    to prevent duplicate notifications across sweep runs.
+
+    Args:
+        ttl_hours: File TTL in hours. Defaults to settings.FILE_UPLOAD_TTL_HOURS.
+        notify_hours: Hours before expiry to notify. Defaults to
+            settings.FILE_UPLOAD_EXPIRY_NOTIFY_HOURS.
+
+    Returns:
+        dict: {"notified": int, "skipped": int}
+    """
+    if ttl_hours is None:
+        ttl_hours = settings.FILE_UPLOAD_TTL_HOURS
+    if notify_hours is None:
+        notify_hours = getattr(settings, "FILE_UPLOAD_EXPIRY_NOTIFY_HOURS", 1)
+
+    cutoff = timezone.now() - timedelta(hours=ttl_hours - notify_hours)
+    expiring_qs = UploadFile.objects.filter(
+        status=UploadFile.Status.STORED,
+        created_at__lt=cutoff,
+    )
+
+    notified = 0
+    skipped = 0
+    for upload in expiring_qs.iterator():
+        try:
+            with transaction.atomic():
+                emit_event(
+                    aggregate_type="UploadFile",
+                    aggregate_id=str(upload.pk),
+                    event_type="file.expiring",
+                    payload={
+                        "file_id": str(upload.pk),
+                        "original_filename": upload.original_filename,
+                        "content_type": upload.content_type,
+                        "size_bytes": upload.size_bytes,
+                        "sha256": upload.sha256,
+                        "url": upload.file.url,
+                        "expires_at": str(
+                            upload.created_at + timedelta(hours=ttl_hours)
+                        ),
+                    },
+                )
+            notified += 1
+        except IntegrityError:
+            skipped += 1  # Already notified (idempotency constraint)
+
+    logger.info(
+        "Expiring file notifications: %d notified, %d skipped (already notified).",
+        notified,
+        skipped,
+    )
+    return {"notified": notified, "skipped": skipped}

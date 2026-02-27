@@ -1,6 +1,7 @@
 """Unit tests for outbox services."""
 
 from datetime import timedelta
+from unittest.mock import patch
 
 import pytest
 from django.db import IntegrityError
@@ -65,7 +66,8 @@ class TestEmitEvent:
 class TestProcessPendingEvents:
     """Tests for process_pending_events() service function."""
 
-    def test_marks_pending_events_as_delivered(self, make_outbox_event):
+    def test_marks_pending_events_as_delivered_no_endpoints(self, make_outbox_event):
+        """Events with no matching endpoints are marked DELIVERED (no-op)."""
         event = make_outbox_event()
         result = process_pending_events()
         event.refresh_from_db()
@@ -73,6 +75,7 @@ class TestProcessPendingEvents:
         assert event.delivered_at is not None
         assert event.next_attempt_at is None
         assert result["processed"] == 1
+        assert result["delivered"] == 1
 
     def test_skips_events_with_future_next_attempt_at(self, make_outbox_event):
         make_outbox_event(
@@ -101,11 +104,13 @@ class TestProcessPendingEvents:
         )
         result = process_pending_events()
         assert result["processed"] == 2
+        assert result["delivered"] == 2
+        assert result["failed"] == 0
         assert result["remaining"] == 0
 
     def test_noop_when_no_pending_events(self):
         result = process_pending_events()
-        assert result == {"processed": 0, "remaining": 0}
+        assert result == {"processed": 0, "delivered": 0, "failed": 0, "remaining": 0}
 
     def test_skips_delivered_events(self, make_outbox_event):
         make_outbox_event(status=OutboxEvent.Status.DELIVERED)
@@ -119,6 +124,145 @@ class TestProcessPendingEvents:
         )
         result = process_pending_events()
         assert result["processed"] == 0
+
+    @patch("common.services.webhook.deliver_to_endpoint")
+    def test_delivers_to_matching_endpoints(
+        self, mock_deliver, make_outbox_event, make_webhook_endpoint
+    ):
+        """Events are delivered to matching active endpoints."""
+        make_webhook_endpoint(event_types=["test.created"])
+        event = make_outbox_event()
+        mock_deliver.return_value = {"ok": True, "status_code": 200, "error": ""}
+
+        result = process_pending_events()
+
+        assert mock_deliver.called
+        event.refresh_from_db()
+        assert event.status == OutboxEvent.Status.DELIVERED
+        assert result["delivered"] == 1
+
+    @patch("common.services.webhook.deliver_to_endpoint")
+    def test_no_matching_endpoints_marks_delivered(
+        self, mock_deliver, make_outbox_event, make_webhook_endpoint
+    ):
+        """Events with no matching endpoints are delivered without HTTP calls."""
+        make_webhook_endpoint(event_types=["other.event"])
+        event = make_outbox_event(event_type="test.created")
+
+        result = process_pending_events()
+
+        mock_deliver.assert_not_called()
+        event.refresh_from_db()
+        assert event.status == OutboxEvent.Status.DELIVERED
+        assert result["delivered"] == 1
+
+    @patch("common.services.webhook.deliver_to_endpoint")
+    def test_failed_delivery_increments_attempts_and_sets_backoff(
+        self, mock_deliver, make_outbox_event, make_webhook_endpoint
+    ):
+        """Failed delivery increments attempts and sets next_attempt_at."""
+        make_webhook_endpoint(event_types=[])  # catch-all
+        event = make_outbox_event()
+        mock_deliver.return_value = {
+            "ok": False,
+            "status_code": 500,
+            "error": "HTTP 500: error",
+        }
+
+        result = process_pending_events()
+
+        event.refresh_from_db()
+        assert event.status == OutboxEvent.Status.PENDING
+        assert event.attempts == 1
+        assert event.next_attempt_at is not None
+        assert event.next_attempt_at > timezone.now()
+        assert event.error_message == f"{event.error_message}"
+        assert result["delivered"] == 0
+        assert result["failed"] == 0  # Not failed yet, just retrying
+
+    @patch("common.services.webhook.deliver_to_endpoint")
+    def test_exceeds_max_attempts_transitions_to_failed(
+        self, mock_deliver, make_outbox_event, make_webhook_endpoint
+    ):
+        """Events exceeding max_attempts transition to FAILED."""
+        make_webhook_endpoint(event_types=[])  # catch-all
+        event = make_outbox_event(attempts=4)  # max_attempts=5, next attempt is 5th
+        mock_deliver.return_value = {
+            "ok": False,
+            "status_code": 500,
+            "error": "HTTP 500: error",
+        }
+
+        result = process_pending_events()
+
+        event.refresh_from_db()
+        assert event.status == OutboxEvent.Status.FAILED
+        assert event.attempts == 5
+        assert event.next_attempt_at is None
+        assert result["failed"] == 1
+
+    @patch("common.services.webhook.deliver_to_endpoint")
+    def test_error_message_populated_on_failure(
+        self, mock_deliver, make_outbox_event, make_webhook_endpoint
+    ):
+        """Error message is set when delivery fails."""
+        make_webhook_endpoint(event_types=[])
+        event = make_outbox_event()
+        mock_deliver.return_value = {
+            "ok": False,
+            "status_code": 503,
+            "error": "HTTP 503: Service Unavailable",
+        }
+
+        process_pending_events()
+
+        event.refresh_from_db()
+        assert "HTTP 503" in event.error_message
+
+    @patch("common.services.webhook.deliver_to_endpoint")
+    def test_inactive_endpoints_excluded(
+        self, mock_deliver, make_outbox_event, make_webhook_endpoint
+    ):
+        """Inactive endpoints are not delivered to."""
+        make_webhook_endpoint(is_active=False, event_types=[])
+        event = make_outbox_event()
+
+        result = process_pending_events()
+
+        mock_deliver.assert_not_called()
+        event.refresh_from_db()
+        assert event.status == OutboxEvent.Status.DELIVERED
+        assert result["delivered"] == 1
+
+    @patch("common.services.webhook.deliver_to_endpoint")
+    def test_event_type_exact_match(
+        self, mock_deliver, make_outbox_event, make_webhook_endpoint
+    ):
+        """Event type matching is exact match."""
+        make_webhook_endpoint(event_types=["file.stored"])
+        event = make_outbox_event(event_type="file.stored")
+        mock_deliver.return_value = {"ok": True, "status_code": 200, "error": ""}
+
+        process_pending_events()
+
+        assert mock_deliver.called
+        event.refresh_from_db()
+        assert event.status == OutboxEvent.Status.DELIVERED
+
+    @patch("common.services.webhook.deliver_to_endpoint")
+    def test_empty_event_types_matches_all(
+        self, mock_deliver, make_outbox_event, make_webhook_endpoint
+    ):
+        """Empty event_types list matches all event types (catch-all)."""
+        make_webhook_endpoint(event_types=[])
+        event = make_outbox_event(event_type="any.event.type")
+        mock_deliver.return_value = {"ok": True, "status_code": 200, "error": ""}
+
+        process_pending_events()
+
+        assert mock_deliver.called
+        event.refresh_from_db()
+        assert event.status == OutboxEvent.Status.DELIVERED
 
 
 @pytest.mark.django_db

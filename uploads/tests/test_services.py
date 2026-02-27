@@ -1,11 +1,14 @@
 """Unit tests for upload file services."""
 
 import hashlib
+from datetime import timedelta
 
 import pytest
+from common.models import OutboxEvent
 from django.core.exceptions import ValidationError
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import override_settings
+from django.utils import timezone
 
 from uploads.models import UploadBatch, UploadFile
 from uploads.services.uploads import (
@@ -16,6 +19,7 @@ from uploads.services.uploads import (
     mark_file_deleted,
     mark_file_failed,
     mark_file_processed,
+    notify_expiring_files,
     validate_file,
 )
 
@@ -234,3 +238,116 @@ class TestFinalizeBatch:
 
         result = finalize_batch(batch)
         assert result.status == UploadBatch.Status.FAILED
+
+
+@pytest.mark.django_db
+class TestCreateUploadFileOutboxEvent:
+    """Tests for file.stored outbox event emission in create_upload_file."""
+
+    def test_stored_file_emits_outbox_event(self, user, tmp_path, settings):
+        """Successful upload emits file.stored outbox event with correct payload."""
+        settings.MEDIA_ROOT = tmp_path
+        content = b"test pdf content"
+        file = SimpleUploadedFile("document.pdf", content)
+        upload = create_upload_file(user, file)
+
+        assert upload.status == UploadFile.Status.STORED
+        event = OutboxEvent.objects.get(event_type="file.stored")
+        assert event.aggregate_type == "UploadFile"
+        assert event.aggregate_id == str(upload.pk)
+        assert event.payload["file_id"] == str(upload.pk)
+        assert event.payload["original_filename"] == "document.pdf"
+        assert event.payload["content_type"] == "application/pdf"
+        assert event.payload["size_bytes"] == len(content)
+        assert event.payload["sha256"] == upload.sha256
+        assert "url" in event.payload
+
+    def test_failed_file_does_not_emit_outbox_event(self, user, tmp_path, settings):
+        """Failed upload (oversized) does not create outbox event."""
+        settings.MEDIA_ROOT = tmp_path
+        settings.FILE_UPLOAD_MAX_SIZE = 10
+        file = SimpleUploadedFile("big.pdf", b"x" * 100)
+        upload = create_upload_file(user, file)
+
+        assert upload.status == UploadFile.Status.FAILED
+        assert not OutboxEvent.objects.filter(event_type="file.stored").exists()
+
+    def test_outbox_event_idempotency_key(self, user, tmp_path, settings):
+        """Outbox event idempotency key is 'UploadFile:{pk}'."""
+        settings.MEDIA_ROOT = tmp_path
+        file = SimpleUploadedFile("doc.pdf", b"content")
+        upload = create_upload_file(user, file)
+
+        event = OutboxEvent.objects.get(event_type="file.stored")
+        assert event.idempotency_key == f"UploadFile:{upload.pk}"
+
+
+@pytest.mark.django_db
+class TestNotifyExpiringFiles:
+    """Tests for notify_expiring_files() service function."""
+
+    def _create_old_upload(self, user, tmp_path, settings, hours_ago):
+        """Helper to create an upload with a backdated created_at."""
+        settings.MEDIA_ROOT = tmp_path
+        file = SimpleUploadedFile("doc.pdf", b"content")
+        upload = create_upload_file(user, file)
+        old_time = timezone.now() - timedelta(hours=hours_ago)
+        UploadFile.objects.filter(pk=upload.pk).update(created_at=old_time)
+        upload.refresh_from_db()
+        return upload
+
+    def test_notifies_files_within_window(self, user, tmp_path, settings):
+        """File created >23h ago (with TTL=24h, notify=1h) gets notification."""
+        upload = self._create_old_upload(user, tmp_path, settings, hours_ago=23.5)
+        # Clear the file.stored event
+        OutboxEvent.objects.filter(event_type="file.stored").delete()
+
+        result = notify_expiring_files(ttl_hours=24, notify_hours=1)
+
+        assert result["notified"] == 1
+        event = OutboxEvent.objects.get(event_type="file.expiring")
+        assert event.payload["file_id"] == str(upload.pk)
+
+    def test_skips_files_outside_window(self, user, tmp_path, settings):
+        """File created <23h ago does not get notification."""
+        self._create_old_upload(user, tmp_path, settings, hours_ago=20)
+        # Clear the file.stored event
+        OutboxEvent.objects.filter(event_type="file.stored").delete()
+
+        result = notify_expiring_files(ttl_hours=24, notify_hours=1)
+
+        assert result["notified"] == 0
+        assert not OutboxEvent.objects.filter(event_type="file.expiring").exists()
+
+    def test_skips_non_stored_files(self, user, tmp_path, settings):
+        """Files with status!=STORED are not notified."""
+        upload = self._create_old_upload(user, tmp_path, settings, hours_ago=25)
+        upload.status = UploadFile.Status.PROCESSED
+        upload.save(update_fields=["status"])
+        OutboxEvent.objects.filter(event_type="file.stored").delete()
+
+        result = notify_expiring_files(ttl_hours=24, notify_hours=1)
+
+        assert result["notified"] == 0
+
+    def test_duplicate_notification_skipped(self, user, tmp_path, settings):
+        """Calling twice for the same file skips on second call."""
+        self._create_old_upload(user, tmp_path, settings, hours_ago=23.5)
+        OutboxEvent.objects.filter(event_type="file.stored").delete()
+
+        result1 = notify_expiring_files(ttl_hours=24, notify_hours=1)
+        result2 = notify_expiring_files(ttl_hours=24, notify_hours=1)
+
+        assert result1["notified"] == 1
+        assert result2["notified"] == 0
+        assert result2["skipped"] == 1
+
+    def test_event_payload_includes_expires_at(self, user, tmp_path, settings):
+        """Payload has 'expires_at' field."""
+        self._create_old_upload(user, tmp_path, settings, hours_ago=23.5)
+        OutboxEvent.objects.filter(event_type="file.stored").delete()
+
+        notify_expiring_files(ttl_hours=24, notify_hours=1)
+
+        event = OutboxEvent.objects.get(event_type="file.expiring")
+        assert "expires_at" in event.payload

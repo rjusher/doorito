@@ -28,8 +28,10 @@ def deliver_outbox_events_task(self):
     result = process_pending_events()
     if result["processed"] > 0:
         logger.info(
-            "Delivered %d outbox events, %d remaining.",
+            "Processed %d outbox events: %d delivered, %d failed, %d remaining.",
             result["processed"],
+            result["delivered"],
+            result["failed"],
             result["remaining"],
         )
     return result

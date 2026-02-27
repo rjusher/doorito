@@ -38,3 +38,25 @@ def make_outbox_event(db):
         )
 
     return _make
+
+
+@pytest.fixture
+def make_webhook_endpoint(db):
+    """Factory fixture to create WebhookEndpoint instances."""
+
+    def _make(
+        url="https://example.com/webhook",
+        secret="test-secret",
+        event_types=None,
+        is_active=True,
+    ):
+        from common.models import WebhookEndpoint
+
+        return WebhookEndpoint.objects.create(
+            url=url,
+            secret=secret,
+            event_types=event_types or [],
+            is_active=is_active,
+        )
+
+    return _make

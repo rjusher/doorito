@@ -168,6 +168,11 @@ class Base(Configuration):
                 "schedule": crontab(minute=30, hour="*/6"),
                 "options": {"queue": "default"},
             },
+            "notify-expiring-files": {
+                "task": "uploads.tasks.notify_expiring_files_task",
+                "schedule": crontab(minute=0),
+                "options": {"queue": "default"},
+            },
         }
 
     # File upload settings
@@ -176,6 +181,7 @@ class Base(Configuration):
     FILE_UPLOAD_ALLOWED_TYPES = (
         None  # None = accept all; set to list e.g. ["application/pdf"]
     )
+    FILE_UPLOAD_EXPIRY_NOTIFY_HOURS = 1  # Hours before TTL expiry to emit file.expiring
 
     # Default field
     DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"

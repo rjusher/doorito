@@ -64,3 +64,30 @@ def cleanup_expired_upload_files_task(self):
         remaining,
     )
     return {"deleted": deleted_count, "remaining": remaining}
+
+
+@shared_task(
+    name="uploads.tasks.notify_expiring_files_task",
+    bind=True,
+    max_retries=2,
+    default_retry_delay=60,
+)
+def notify_expiring_files_task(self):
+    """Emit file.expiring events for files approaching TTL expiry.
+
+    Runs hourly via celery-beat. Relies on outbox idempotency
+    constraint to prevent duplicate notifications.
+
+    Returns:
+        dict: {"notified": int, "skipped": int}
+    """
+    from uploads.services.uploads import notify_expiring_files
+
+    result = notify_expiring_files()
+    if result["notified"] > 0:
+        logger.info(
+            "Notified %d expiring files, %d skipped.",
+            result["notified"],
+            result["skipped"],
+        )
+    return result

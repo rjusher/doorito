@@ -1,4 +1,4 @@
-"""Unit tests for OutboxEvent model."""
+"""Unit tests for OutboxEvent and WebhookEndpoint models."""
 
 import uuid
 from datetime import datetime
@@ -7,7 +7,7 @@ from decimal import Decimal
 import pytest
 from django.db import IntegrityError
 
-from common.models import OutboxEvent
+from common.models import OutboxEvent, WebhookEndpoint
 
 
 @pytest.mark.django_db
@@ -105,3 +105,60 @@ class TestOutboxEventPayload:
         event = make_outbox_event(payload={"timestamp": now})
         event.refresh_from_db()
         assert "2026-01-15" in event.payload["timestamp"]
+
+
+@pytest.mark.django_db
+class TestWebhookEndpoint:
+    """Tests for WebhookEndpoint model."""
+
+    def test_create_with_all_fields(self):
+        endpoint = WebhookEndpoint.objects.create(
+            url="https://example.com/webhook",
+            secret="my-secret",
+            event_types=["file.stored", "file.expiring"],
+            is_active=True,
+        )
+        assert endpoint.pk is not None
+        assert isinstance(endpoint.pk, uuid.UUID)
+        assert endpoint.url == "https://example.com/webhook"
+        assert endpoint.secret == "my-secret"
+        assert endpoint.event_types == ["file.stored", "file.expiring"]
+        assert endpoint.is_active is True
+
+    def test_str_active(self):
+        endpoint = WebhookEndpoint.objects.create(
+            url="https://example.com/hook",
+            secret="s",
+            is_active=True,
+        )
+        assert str(endpoint) == "https://example.com/hook (active)"
+
+    def test_str_inactive(self):
+        endpoint = WebhookEndpoint.objects.create(
+            url="https://example.com/hook",
+            secret="s",
+            is_active=False,
+        )
+        assert str(endpoint) == "https://example.com/hook (inactive)"
+
+    def test_default_event_types_empty_list(self):
+        endpoint = WebhookEndpoint.objects.create(
+            url="https://example.com/hook",
+            secret="s",
+        )
+        assert endpoint.event_types == []
+
+    def test_default_is_active_true(self):
+        endpoint = WebhookEndpoint.objects.create(
+            url="https://example.com/hook",
+            secret="s",
+        )
+        assert endpoint.is_active is True
+
+    def test_timestamped_fields_auto_set(self):
+        endpoint = WebhookEndpoint.objects.create(
+            url="https://example.com/hook",
+            secret="s",
+        )
+        assert endpoint.created_at is not None
+        assert endpoint.updated_at is not None

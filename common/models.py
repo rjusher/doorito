@@ -65,3 +65,42 @@ class OutboxEvent(TimeStampedModel):
 
     def __str__(self):
         return f"{self.event_type} ({self.get_status_display()})"
+
+
+class WebhookEndpoint(TimeStampedModel):
+    """Configured webhook destination for outbox event delivery.
+
+    Events are delivered via HTTP POST to active endpoints whose
+    event_types match the event's event_type. An empty event_types
+    list matches all events (catch-all).
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid7, editable=False)
+    url = models.URLField(max_length=2048, help_text="Target URL to POST events to")
+    secret = models.CharField(
+        max_length=255,
+        help_text="Shared secret for HMAC-SHA256 request signing",
+    )
+    event_types = models.JSONField(
+        default=list,
+        blank=True,
+        encoder=DjangoJSONEncoder,
+        help_text=(
+            'JSON list of event types to subscribe to (e.g., ["file.stored"]). '
+            "Empty list matches all events."
+        ),
+    )
+    is_active = models.BooleanField(
+        default=True,
+        help_text="Enable or disable delivery to this endpoint",
+    )
+
+    class Meta:
+        db_table = "webhook_endpoint"
+        verbose_name = "webhook endpoint"
+        verbose_name_plural = "webhook endpoints"
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        status = "active" if self.is_active else "inactive"
+        return f"{self.url} ({status})"

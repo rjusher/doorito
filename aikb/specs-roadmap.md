@@ -34,6 +34,7 @@ See `PEPs/ABOUT.md` for full PEP documentation and `CLAUDE.md` for the PEP lifec
 | PEP workflow system | Ready |
 | aikb documentation system | Ready |
 | File upload infrastructure (uploads) | Ready |
+| Event outbox infrastructure (common) | Ready |
 
 ## What's Not Built Yet
 

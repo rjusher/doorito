@@ -13,6 +13,11 @@ This file tracks all PEPs that have been fully implemented. Once a PEP is implem
 - **Summary**: Brief description of what was implemented and its impact.
 -->
 
+### PEP 0004: Event Outbox Infrastructure
+- **Implemented**: 2026-02-27
+- **Commit(s)**: `6be51f9`
+- **Summary**: Implemented a generic transactional outbox in the `common` app for reliable at-least-once event delivery. Added `OutboxEvent` model (`common/models.py`) with UUID v7 PK, aggregate/payload pattern (no FK to specific models), 3-state lifecycle (PENDING/DELIVERED/FAILED), retry tracking (`attempts`, `max_attempts`, `next_attempt_at`), `DjangoJSONEncoder` payload, partial index on pending events, and `UniqueConstraint(event_type, idempotency_key)` for deduplication. Created `common/services/outbox.py` with three service functions: `emit_event()` (writes event in caller's transaction, dispatches delivery via `transaction.on_commit()` wrapped in `safe_dispatch()`), `process_pending_events()` (batch-locked delivery with `select_for_update(skip_locked=True)`), and `cleanup_delivered_events()` (retention-based cleanup of terminal events). Added two Celery tasks: `deliver_outbox_events_task` (on-demand + 5-minute sweep) and `cleanup_delivered_outbox_events_task` (7-day retention, 6-hour crontab). Registered `OutboxEventAdmin` with monitoring fields and a `retry_failed_events` action. Added `OUTBOX_SWEEP_INTERVAL_MINUTES` and `OUTBOX_RETENTION_HOURS` settings. Wrote 49 tests covering models, services, and tasks (80 total across project).
+
 ### PEP 0005: Celery Beat Infrastructure
 - **Implemented**: 2026-02-26
 - **Commit(s)**: (uncommitted — to be included in finalization commit)

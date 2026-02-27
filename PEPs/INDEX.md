@@ -4,13 +4,14 @@ Quick reference of all PEPs currently in the workflow. Update this table when a 
 
 | PEP  | Title                          | Status   | Effort | Risk   | Depends On |
 |------|--------------------------------|----------|--------|--------|------------|
-| 0004 | Event Outbox Infrastructure     | Implementing | M      | Medium | PEP 0003, PEP 0005 (implemented)  |
+
+_(No active PEPs)_
 
 ## Dependency Graph
 
 ```mermaid
 graph TD
-    PEP0004["🟡 0004: Event Outbox Infrastructure"]
+    %% No active PEPs
 ```
 
-**Legend:** 🔴 High risk | 🟡 Medium risk | 🟢 Low risk
+**Legend:** :red_circle: High risk | :yellow_circle: Medium risk | :green_circle: Low risk

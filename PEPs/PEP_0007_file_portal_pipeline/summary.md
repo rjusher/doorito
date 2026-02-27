@@ -41,7 +41,7 @@ Add a `WebhookEndpoint` model to the `common` app that stores configured webhook
 
 - `url` — the target URL to POST events to
 - `secret` — a shared secret for HMAC-SHA256 request signing (so consumers can verify authenticity)
-- `event_types` — a JSON list of event type patterns to subscribe to (e.g., `["file.stored", "file.expiring"]`), or empty for all events
+- `event_types` — a JSON list of event types to subscribe to (e.g., `["file.stored", "file.expiring"]`), or empty `[]` for all events. Exact match only — no wildcard patterns.
 - `is_active` — boolean toggle to enable/disable delivery
 - Standard `TimeStampedModel` fields
 
@@ -55,9 +55,11 @@ Replace the placeholder logic in `process_pending_events()` with actual HTTP POS
 - POST the event payload as JSON to each matching endpoint URL
 - Include an `X-Webhook-Signature` header with an HMAC-SHA256 signature of the request body, keyed by the endpoint's `secret`
 - Include an `X-Webhook-Event` header with the event type and an `X-Webhook-Delivery` header with the event ID for consumer-side deduplication
-- On HTTP 2xx: mark the event as DELIVERED
-- On HTTP 4xx/5xx or network error: increment attempts, set `next_attempt_at` with exponential backoff (existing retry logic)
-- Use `httpx` (async-capable HTTP client) with a short timeout (10s connect, 30s read) to avoid blocking the worker on slow consumers
+- On HTTP 2xx: mark the event as DELIVERED (only when ALL matching endpoints succeed)
+- On HTTP 4xx/5xx or network error: increment attempts, set `next_attempt_at` with exponential backoff, re-deliver to ALL matching endpoints on retry (consumers must be idempotent — use `X-Webhook-Delivery` header for deduplication)
+- On `attempts >= max_attempts`: transition to FAILED status
+- Use `httpx` synchronous client with a short timeout (10s connect, 30s read) and connection pooling within each batch to avoid blocking the worker on slow consumers
+- HTTP calls happen OUTSIDE `select_for_update` transactions to avoid holding row locks during network I/O
 
 ### 4. Pre-Expiry Notification Event
 
@@ -164,3 +166,4 @@ Before the cleanup task deletes a file, emit a `file.expiring` outbox event with
 | Date | From | To | Notes |
 |------|------|----|-------|
 | 2026-02-27 | — | Proposed | Initial creation |
+<!-- Amendment 2026-02-27: Updated based on discussions — clarified per-event delivery tracking, exact-match event types, sync httpx client, transaction boundary strategy, delivery batch size rationale -->

@@ -13,6 +13,11 @@ This file tracks all PEPs that have been fully implemented. Once a PEP is implem
 - **Summary**: Brief description of what was implemented and its impact.
 -->
 
+### PEP 0008: Canonical Domain Model for OSS Ingest Portal
+- **Implemented**: 2026-02-28
+- **Commit(s)**: `8e083db`
+- **Summary**: Renamed the `uploads` app to `portal` to establish the canonical domain boundary for the OSS ingest portal. Renamed database tables from `upload_*` to `portal_upload_*` via a manual migration with `ALTER TABLE ... RENAME TO` operations, and updated `django_migrations`/`django_content_type` rows to reflect the new app label. Simplified `UploadFile.Status` from 5 choices (UPLOADING, STORED, PROCESSED, FAILED, DELETED) to 3 (UPLOADING, STORED, FAILED), removing the PROCESSED and DELETED statuses that belonged to downstream processing concerns. Removed `mark_file_processed()` and `mark_file_deleted()` service functions, and updated `finalize_batch()` to use only STORED as the success status. Added `PortalEventOutbox` model — a durable event queue using the generic `aggregate_type`/`aggregate_id` pattern (not FK-bound) with partial index on pending events, unique constraint on `(event_type, idempotency_key)`, and retry/backoff fields. Registered `PortalEventOutboxAdmin` with monitoring fields. Updated all imports, task name strings, and test assertions across the codebase. Added 5 new test classes for the outbox model plus admin registration verification (122 tests total).
+
 ### PEP 0007: File Portal Pipeline
 - **Implemented**: 2026-02-27
 - **Commit(s)**: `ee97a2b`

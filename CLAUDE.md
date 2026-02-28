@@ -22,12 +22,12 @@ The `aikb/` directory contains detailed contextual documentation for AI agents. 
 
 | File | Contents |
 |------|----------|
-| `aikb/architecture.md` | 3-app structure, request flow, template hierarchy |
-| `aikb/models.md` | User model, OutboxEvent, WebhookEndpoint, Upload models (UploadBatch/File/Session/Part), TimeStampedModel, MoneyField, uuid7 |
-| `aikb/services.md` | Service layer convention, outbox services (emit_event, process, cleanup), webhook delivery service, uploads services |
-| `aikb/tasks.md` | Celery configuration, task conventions, outbox delivery/cleanup tasks, upload cleanup/notification tasks |
+| `aikb/architecture.md` | 4-app structure, request flow, template hierarchy |
+| `aikb/models.md` | User model, OutboxEvent, WebhookEndpoint, Portal models (UploadBatch/File/Session/Part, PortalEventOutbox), TimeStampedModel, MoneyField, uuid7 |
+| `aikb/services.md` | Service layer convention, outbox services (emit_event, process, cleanup), webhook delivery service, portal upload/session services |
+| `aikb/tasks.md` | Celery configuration, task conventions, outbox delivery/cleanup tasks, portal cleanup/notification tasks |
 | `aikb/signals.md` | Signal conventions (no signals yet) |
-| `aikb/admin.md` | UserAdmin, OutboxEventAdmin, WebhookEndpointAdmin, Upload admin classes (Batch/File/Session/Part) |
+| `aikb/admin.md` | UserAdmin, OutboxEventAdmin, WebhookEndpointAdmin, Portal admin classes (Batch/File/Session/Part, PortalEventOutbox) |
 | `aikb/cli.md` | `doorito` CLI commands (hello, check) |
 | `aikb/deployment.md` | Docker, environment variables, production configuration |
 | `aikb/conventions.md` | Code patterns, naming conventions, import order |
@@ -249,7 +249,7 @@ DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev celery -A boot bea
 honcho start -f Procfile.dev
 ```
 
-Tasks defined: `deliver_outbox_events_task` and `cleanup_delivered_outbox_events_task` (common app), `cleanup_expired_upload_files_task` and `notify_expiring_files_task` (uploads app) — all scheduled via celery-beat. See `aikb/tasks.md` for details and conventions.
+Tasks defined: `deliver_outbox_events_task` and `cleanup_delivered_outbox_events_task` (common app), `cleanup_expired_upload_files_task` and `notify_expiring_files_task` (portal app) — all scheduled via celery-beat. See `aikb/tasks.md` for details and conventions.
 
 ### Docker
 
@@ -331,7 +331,7 @@ The project has 4 apps (see `aikb/architecture.md` for details):
 | `common` | Shared utilities and cross-cutting infrastructure: TimeStampedModel, OutboxEvent, WebhookEndpoint, MoneyField, uuid7, emit_event service, webhook delivery service, delivery/cleanup tasks |
 | `accounts` | Custom User model (email-based, extends AbstractUser) |
 | `frontend` | Web UI: auth (login/register/logout), dashboard — server-rendered views with HTMX + Alpine.js |
-| `uploads` | Upload models (UploadBatch, UploadFile, UploadSession, UploadPart), services, admin, cleanup task |
+| `portal` | Upload models (UploadBatch, UploadFile, UploadSession, UploadPart), PortalEventOutbox, services, admin, cleanup/notification tasks |
 
 Additional directories:
 - `boot/` — Django project configuration (settings, urls, wsgi, asgi, celery)

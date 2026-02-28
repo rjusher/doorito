@@ -33,7 +33,7 @@ See `PEPs/ABOUT.md` for full PEP documentation and `CLAUDE.md` for the PEP lifec
 | CLI skeleton (doorito script) | Ready |
 | PEP workflow system | Ready |
 | aikb documentation system | Ready |
-| File upload infrastructure (uploads) | Ready |
+| File upload infrastructure + portal event outbox (portal) | Ready |
 | Upload frontend views (upload page) | Ready |
 | Event outbox infrastructure (common) | Ready |
 | Webhook delivery (outbox → HTTP POST) | Ready |

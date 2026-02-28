@@ -18,7 +18,7 @@ The only accounts admin class. Uses Django's built-in `UserAdmin` with no custom
 
 - **URL**: `/admin/`
 - **Auth**: Django's built-in superuser/staff authentication
-- **Models visible**: User, OutboxEvent, WebhookEndpoint, UploadBatch, UploadFile, UploadSession, UploadPart
+- **Models visible**: User, OutboxEvent, WebhookEndpoint, UploadBatch, UploadFile, UploadSession, UploadPart, PortalEventOutbox
 
 ### common/admin.py
 
@@ -49,9 +49,9 @@ class WebhookEndpointAdmin(admin.ModelAdmin):
     date_hierarchy = "created_at"
 ```
 
-### uploads/admin.py
+### portal/admin.py
 
-Four admin classes registered for the upload models:
+Five admin classes registered for the portal models:
 
 ```python
 @admin.register(UploadBatch)
@@ -96,7 +96,17 @@ class UploadPartAdmin(admin.ModelAdmin):
     list_select_related = ("session",)
 ```
 
-All upload admin classes use `list_select_related` to prevent N+1 queries. `date_hierarchy` provides date-based navigation for upload history (except `UploadPart` which is ordered by `part_number`). Computed/auto fields are read-only to prevent manual override.
+```python
+@admin.register(PortalEventOutbox)
+class PortalEventOutboxAdmin(admin.ModelAdmin):
+    list_display = ("event_type", "aggregate_type", "aggregate_id", "status", "attempts", "next_attempt_at", "created_at")
+    list_filter = ("status", "event_type", "aggregate_type", "created_at")
+    search_fields = ("event_type", "aggregate_type", "aggregate_id", "idempotency_key")
+    readonly_fields = ("pk", "aggregate_type", "aggregate_id", "event_type", "payload", "idempotency_key", "attempts", "delivered_at", "error_message", "created_at", "updated_at")
+    date_hierarchy = "created_at"
+```
+
+All portal upload admin classes use `list_select_related` to prevent N+1 queries. `date_hierarchy` provides date-based navigation for upload history (except `UploadPart` which is ordered by `part_number`). Computed/auto fields are read-only to prevent manual override.
 
 ## Conventions
 

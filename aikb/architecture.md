@@ -66,13 +66,13 @@ doorito/
 │   ├── templates/      # frontend/ namespace (base, auth, dashboard, upload, errors, components)
 │   ├── tests/          # test_views_upload.py
 │   └── urls.py         # /app/ URL prefix
-├── uploads/        # Batched, chunked file upload infrastructure
-│   ├── models.py       # UploadBatch, UploadFile, UploadSession, UploadPart (UUID v7 PKs)
-│   ├── admin.py        # UploadBatchAdmin, UploadFileAdmin, UploadSessionAdmin, UploadPartAdmin
+├── portal/         # Batched, chunked file upload infrastructure + portal event outbox
+│   ├── models.py       # UploadBatch, UploadFile, UploadSession, UploadPart, PortalEventOutbox (UUID v7 PKs)
+│   ├── admin.py        # UploadBatchAdmin, UploadFileAdmin, UploadSessionAdmin, UploadPartAdmin, PortalEventOutboxAdmin
 │   ├── services/       # uploads.py (file + batch services), sessions.py (session + part services)
 │   ├── tasks.py        # cleanup_expired_upload_files_task, notify_expiring_files_task
 │   ├── tests/          # test_models.py, test_services.py, test_sessions.py, test_tasks.py
-│   └── migrations/     # 0001_initial.py
+│   └── migrations/     # 0001_initial.py, 0002_portaleventoutbox_and_more.py
 ├── templates/      # Project-level templates
 │   └── base.html       # Root base template (loads Tailwind, HTMX, Alpine.js)
 ├── static/         # Static assets (CSS, JS)
@@ -135,7 +135,7 @@ Three lightweight tools complement Django's server-rendered architecture:
 See [tasks.md](tasks.md) for details.
 
 - **Celery** with PostgreSQL broker via SQLAlchemy transport (no Redis)
-- **Tasks**: `deliver_outbox_events_task` and `cleanup_delivered_outbox_events_task` (common app) -- outbox event delivery via HTTP webhook and cleanup; `cleanup_expired_upload_files_task` and `notify_expiring_files_task` (uploads app) -- TTL-based cleanup and pre-expiry notifications
+- **Tasks**: `deliver_outbox_events_task` and `cleanup_delivered_outbox_events_task` (common app) -- outbox event delivery via HTTP webhook and cleanup; `cleanup_expired_upload_files_task` and `notify_expiring_files_task` (portal app) -- TTL-based cleanup and pre-expiry notifications
 - **Outbox pattern**: `emit_event()` writes events to `OutboxEvent` table in the caller's transaction, dispatches delivery via `transaction.on_commit()`. `process_pending_events()` delivers events via HTTP POST to matching active `WebhookEndpoint` records. Periodic sweep via celery-beat catches missed events.
 - **Periodic scheduling**: `django-celery-beat` with DatabaseScheduler (schedules stored in PostgreSQL). Beat process dispatches tasks on configured intervals. Schedule: outbox delivery sweep every 5 min, outbox cleanup every 6 hours, upload cleanup every 6 hours, pre-expiry notification sweep every hour.
 - **Dev mode**: `CELERY_TASK_ALWAYS_EAGER=True` (synchronous, no broker needed)

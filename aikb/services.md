@@ -36,8 +36,8 @@ def create_widget(store, name, price, created_by=None):
 Two apps have service modules:
 - `common/services/outbox.py` -- Outbox event emission, delivery, and cleanup
 - `common/services/webhook.py` -- Webhook HTTP delivery and HMAC signing
-- `uploads/services/uploads.py` -- File validation, creation, and status transitions; batch management; pre-expiry notifications
-- `uploads/services/sessions.py` -- Chunked upload session lifecycle management
+- `portal/services/uploads.py` -- File validation, creation, and status transitions; batch management; pre-expiry notifications
+- `portal/services/sessions.py` -- Chunked upload session lifecycle management
 
 When adding services to a new app, follow the same pattern:
 
@@ -87,11 +87,11 @@ Deliver an outbox event to a single webhook endpoint. Serializes `event.payload`
 
 ---
 
-## Uploads App
+## Portal App
 
-### uploads/services/uploads.py
+### portal/services/uploads.py
 
-Upload handling services for file validation, creation, status transitions, batch management, and pre-expiry notifications. Contains 9 functions.
+Portal upload services for file validation, creation, status transitions, batch management, and pre-expiry notifications. Contains 7 functions.
 
 **`validate_file(file, max_size=None)`**
 Validate an uploaded file's size and MIME type. Returns `(content_type, size_bytes)` tuple. Raises `ValidationError` with code `file_too_large` or `file_type_not_allowed`. Uses `mimetypes.guess_type()` for MIME detection (extension-based, falls back to `application/octet-stream`). Checks against `settings.FILE_UPLOAD_MAX_SIZE` (default 50 MB) and `settings.FILE_UPLOAD_ALLOWED_TYPES` (`None` = accept all).
@@ -102,29 +102,23 @@ Compute SHA-256 hash of a file. Reads in 64 KB chunks. Seeks to start before and
 **`create_upload_file(user, file, batch=None)`**
 Validate, hash, and store an upload file. Returns an `UploadFile` instance with `status=STORED` (success, with `sha256` computed) or `status=FAILED` (validation error with `error_message` populated). Optionally associates the file with an `UploadBatch`. On success, emits a `file.stored` outbox event (via `emit_event()`) wrapped in `transaction.atomic()` alongside the `UploadFile.objects.create()` call. The event payload includes: `file_id`, `original_filename`, `content_type`, `size_bytes`, `sha256`, and `url` (the file's storage URL — local path in Dev, S3 URL in Production). Failed uploads do not emit events.
 
-**`mark_file_processed(upload_file)`**
-Transition an upload file from STORED to PROCESSED. Uses atomic `filter(pk=..., status=STORED).update(status=PROCESSED)` to prevent race conditions. Raises `ValueError` if the upload file is not in STORED status. Returns the refreshed `UploadFile` instance.
-
 **`mark_file_failed(upload_file, error="")`**
 Transition an upload file to FAILED status with an error message. Saves via `update_fields` for efficiency. Returns the updated `UploadFile` instance.
-
-**`mark_file_deleted(upload_file)`**
-Transition an upload file to DELETED status and remove the physical file via `file.delete(save=False)`. Handles `FileNotFoundError` gracefully. Returns the updated `UploadFile` instance.
 
 **`create_batch(user, idempotency_key="")`**
 Create a new upload batch with INIT status. Returns an `UploadBatch` instance.
 
 **`finalize_batch(batch)`**
-Finalize a batch based on its files' statuses. Uses `@transaction.atomic`. Transitions to: COMPLETE (all files STORED/PROCESSED), PARTIAL (some succeeded, some failed), or FAILED (all failed or no files). Returns the updated `UploadBatch` instance.
+Finalize a batch based on its files' statuses. Uses `@transaction.atomic`. Transitions to: COMPLETE (all files STORED), PARTIAL (some STORED, some FAILED), or FAILED (all failed or no files). Returns the updated `UploadBatch` instance.
 
 **`notify_expiring_files(ttl_hours=None, notify_hours=None)`**
 Emit `file.expiring` outbox events for files approaching TTL expiry. Queries `UploadFile.objects.filter(status=STORED, created_at__lt=cutoff)` where `cutoff = now - timedelta(hours=ttl_hours - notify_hours)`. Iterates with `.iterator()` for memory efficiency. Per file: `transaction.atomic()` + `emit_event(event_type="file.expiring")` with payload including `file_id`, `original_filename`, `content_type`, `size_bytes`, `sha256`, `url`, `expires_at`. Catches `IntegrityError` per file for idempotency (outbox unique constraint prevents duplicate notifications). Defaults from `settings.FILE_UPLOAD_TTL_HOURS` and `settings.FILE_UPLOAD_EXPIRY_NOTIFY_HOURS`. Returns `{"notified": int, "skipped": int}`.
 
 ---
 
-### uploads/services/sessions.py
+### portal/services/sessions.py
 
-Chunked upload session lifecycle management. Contains 3 functions.
+Portal session services for chunked upload lifecycle management. Contains 3 functions.
 
 **`create_upload_session(upload_file, total_size_bytes, chunk_size_bytes=None)`**
 Create an upload session for chunked file upload. Calculates `total_parts` via `math.ceil(total_size_bytes / chunk_size_bytes)`. Default chunk size is 5 MB. Returns an `UploadSession` instance.

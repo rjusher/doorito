@@ -43,7 +43,7 @@ Two queues are configured for future use:
 
 ## Current State
 
-Two apps have task modules: `common` (outbox delivery and cleanup) and `uploads` (file cleanup and pre-expiry notifications). Celery autodiscovery (`boot/celery.py`) automatically discovers `tasks.py` in all `INSTALLED_APPS`. When adding tasks to a new app, create `{app}/tasks.py` and follow the conventions below.
+Two apps have task modules: `common` (outbox delivery and cleanup) and `portal` (file cleanup and pre-expiry notifications). Celery autodiscovery (`boot/celery.py`) automatically discovers `tasks.py` in all `INSTALLED_APPS`. When adding tasks to a new app, create `{app}/tasks.py` and follow the conventions below.
 
 ---
 
@@ -70,12 +70,12 @@ Two apps have task modules: `common` (outbox delivery and cleanup) and `uploads`
 
 ---
 
-## Uploads App
+## Portal App
 
-### uploads/tasks.py
+### portal/tasks.py
 
 **`cleanup_expired_upload_files_task`**
-- **Name**: `uploads.tasks.cleanup_expired_upload_files_task`
+- **Name**: `portal.tasks.cleanup_expired_upload_files_task`
 - **Purpose**: Deletes upload files older than `FILE_UPLOAD_TTL_HOURS` (default 24 hours). Removes both physical files from disk and database records.
 - **Model**: `UploadFile` (lazy import inside task body)
 - **Batch limit**: Processes at most 1000 expired records per run to stay within `CELERY_TASK_TIME_LIMIT` (300s).
@@ -86,7 +86,7 @@ Two apps have task modules: `common` (outbox delivery and cleanup) and `uploads`
 - **Notes**: Uses lazy imports. Handles `FileNotFoundError` gracefully for already-deleted files. In Dev mode, runs synchronously via `CELERY_TASK_ALWAYS_EAGER=True`. Scheduled via celery-beat every 6 hours (at 00:00, 06:00, 12:00, 18:00 UTC) using `CLEANUP_UPLOADS_INTERVAL_HOURS` setting. Can also be invoked manually.
 
 **`notify_expiring_files_task`**
-- **Name**: `uploads.tasks.notify_expiring_files_task`
+- **Name**: `portal.tasks.notify_expiring_files_task`
 - **Purpose**: Emit `file.expiring` outbox events for files approaching TTL expiry. Delegates to `notify_expiring_files()` service. Relies on outbox idempotency constraint to prevent duplicate notifications across sweep runs.
 - **Schedule**: `crontab(minute=0)` (hourly)
 - **Queue**: `default`
@@ -156,10 +156,10 @@ Periodic tasks are managed by `django-celery-beat` with the DatabaseScheduler, w
 
 | Task Name | Task Path | Schedule | Queue |
 |-----------|-----------|----------|-------|
-| `cleanup-expired-upload-files` | `uploads.tasks.cleanup_expired_upload_files_task` | Every 6 hours (crontab) | default |
+| `cleanup-expired-upload-files` | `portal.tasks.cleanup_expired_upload_files_task` | Every 6 hours (crontab) | default |
 | `deliver-outbox-events-sweep` | `common.tasks.deliver_outbox_events_task` | Every 5 minutes (timedelta) | default |
 | `cleanup-delivered-outbox-events` | `common.tasks.cleanup_delivered_outbox_events_task` | Every 6 hours at :30 (crontab) | default |
-| `notify-expiring-files` | `uploads.tasks.notify_expiring_files_task` | Every hour (crontab) | default |
+| `notify-expiring-files` | `portal.tasks.notify_expiring_files_task` | Every hour (crontab) | default |
 
 ### Adding a New Periodic Task
 

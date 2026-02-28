@@ -82,12 +82,12 @@ Custom user model extending Django's AbstractUser. No additional fields beyond w
 
 ---
 
-## Uploads App
+## Portal App
 
-All upload models use UUID v7 primary keys (via `common.utils.uuid7`), inherit from `TimeStampedModel`, and live in `uploads/models.py`.
+All portal models use UUID v7 primary keys (via `common.utils.uuid7`), inherit from `TimeStampedModel`, and live in `portal/models.py`.
 
 ### UploadBatch (TimeStampedModel)
-Groups multiple uploaded files into a single logical batch for UX progress tracking. `db_table = "upload_batch"`.
+Groups multiple uploaded files into a single logical batch for UX progress tracking. `db_table = "portal_upload_batch"`.
 
 **Fields:**
 - `id` -- UUIDField (primary_key, default=uuid7)
@@ -112,7 +112,7 @@ Groups multiple uploaded files into a single logical batch for UX progress track
 ---
 
 ### UploadFile (TimeStampedModel)
-Canonical file record. Source of truth once the file reaches `stored` status. Redesigned from the original `IngestFile` model (PEP 0003). `db_table = "upload_file"`.
+Canonical file record. Source of truth once the file reaches `stored` status. Redesigned from the original `IngestFile` model (PEP 0003). `db_table = "portal_upload_file"`.
 
 **Fields:**
 - `id` -- UUIDField (primary_key, default=uuid7)
@@ -131,11 +131,9 @@ Canonical file record. Source of truth once the file reaches `stored` status. Re
 **Status Choices (UploadFile.Status):**
 - `UPLOADING` ("uploading") -- File upload in progress (chunked) or about to be stored.
 - `STORED` ("stored") -- File validated, hashed, and stored. Available for downstream processing.
-- `PROCESSED` ("processed") -- A downstream process has consumed the file.
 - `FAILED` ("failed") -- Upload validation or processing failed.
-- `DELETED` ("deleted") -- Physical file removed, record retained for audit.
 
-**Status lifecycle:** `uploading → stored → processed / deleted` or `uploading → failed`
+**Status lifecycle:** `uploading → stored` or `uploading → failed`
 
 **Indexes:**
 - Composite: `["uploaded_by", "-created_at"]` (user's upload list)
@@ -149,7 +147,7 @@ Canonical file record. Source of truth once the file reaches `stored` status. Re
 ---
 
 ### UploadSession (TimeStampedModel)
-One upload session per file. Holds the chunking contract and tracks upload progress. OneToOne relationship with `UploadFile`. `db_table = "upload_session"`.
+One upload session per file. Holds the chunking contract and tracks upload progress. OneToOne relationship with `UploadFile`. `db_table = "portal_upload_session"`.
 
 **Fields:**
 - `id` -- UUIDField (primary_key, default=uuid7)
@@ -180,7 +178,7 @@ One upload session per file. Holds the chunking contract and tracks upload progr
 ---
 
 ### UploadPart (TimeStampedModel)
-Tracks individual chunks within an upload session. Unique per `(session, part_number)`. `db_table = "upload_part"`.
+Tracks individual chunks within an upload session. Unique per `(session, part_number)`. `db_table = "portal_upload_part"`.
 
 **Fields:**
 - `id` -- UUIDField (primary_key, default=uuid7)
@@ -209,6 +207,43 @@ Tracks individual chunks within an upload session. Unique per `(session, part_nu
 
 ---
 
+### PortalEventOutbox (TimeStampedModel)
+Durable event queue for portal domain events. Uses the generic `aggregate_type`/`aggregate_id` pattern (not FK-bound) to support file, batch, and session-level events. `db_table = "portal_event_outbox"`. Defined in `portal/models.py`.
+
+**Fields:**
+- `id` -- UUIDField (primary_key, default=uuid7)
+- `aggregate_type` -- CharField (max_length=100). Model name of the source record (e.g., "UploadFile", "UploadBatch").
+- `aggregate_id` -- CharField (max_length=100). String PK of the source record.
+- `event_type` -- CharField (max_length=100). Dotted event name (e.g., "file.stored", "file.expiring").
+- `payload` -- JSONField (default=dict, encoder=DjangoJSONEncoder). Event data, handles UUID/datetime/Decimal.
+- `status` -- CharField (max_length=20, choices=Status.choices, default=PENDING)
+- `idempotency_key` -- CharField (max_length=255). Deduplication key.
+- `attempts` -- PositiveIntegerField (default=0). Delivery attempt counter.
+- `max_attempts` -- PositiveIntegerField (default=5). Maximum delivery attempts before FAILED.
+- `next_attempt_at` -- DateTimeField (null=True). When event is eligible for next delivery attempt; null when terminal.
+- `delivered_at` -- DateTimeField (null=True, blank=True). Set on successful delivery.
+- `error_message` -- TextField (blank). Last error message (overwritten on retry).
+- `created_at`, `updated_at` -- inherited from TimeStampedModel
+
+**Status Choices (PortalEventOutbox.Status):**
+- `PENDING` ("pending") -- Awaiting delivery (initial or retrying).
+- `DELIVERED` ("delivered") -- Successfully processed (terminal).
+- `FAILED` ("failed") -- Max retries exhausted (terminal).
+
+**Status lifecycle:** `pending → delivered` (success) or `pending → ... retry ... → failed` (max retries exhausted)
+
+**Indexes:**
+- Partial index: `["next_attempt_at"]` WHERE `status='pending'` (name: `idx_portal_outbox_pending_next`) -- optimizes delivery poll query
+
+**Constraints:**
+- `UniqueConstraint(fields=["event_type", "idempotency_key"], name="unique_portal_event_type_idempotency_key")` -- prevents duplicate events
+
+**Ordering:** `["-created_at"]`
+
+**`__str__`:** `f"{self.event_type} ({self.get_status_display()})"`
+
+---
+
 ## FK Cascade Rules
 
 | FK | On Delete | Rationale |
@@ -233,6 +268,7 @@ User (accounts.User, extends AbstractUser)
 
 OutboxEvent (standalone, no FKs)
 WebhookEndpoint (standalone, no FKs)
+PortalEventOutbox (standalone, no FKs)
 ```
 
-All models inherit from `TimeStampedModel`. All upload models use UUID v7 primary keys via `common.utils.uuid7`. Use `MoneyField` for monetary amounts.
+All models inherit from `TimeStampedModel`. All portal and common models use UUID v7 primary keys via `common.utils.uuid7`. Use `MoneyField` for monetary amounts.

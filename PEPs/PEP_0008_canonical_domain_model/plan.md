@@ -42,10 +42,18 @@ Read these files before implementing any step. Each is listed with the specific 
 
 ## Prerequisites
 
-- PostgreSQL running and accessible (migrations will be applied)
+<!-- Amendment 2026-02-28: Preflight — fixed DB prerequisite (Dev uses SQLite), added orphan cleanup -->
+- Database accessible (SQLite in Dev, PostgreSQL in Production)
 - Virtual environment active: `source ~/.virtualenvs/inventlily-d22a143/bin/activate`
 - Current tests pass: `DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python manage.py test`
 - No unapplied migrations: `DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python manage.py migrate --check`
+- **Orphaned database records cleaned up** (from a previous implementation attempt):
+  ```sql
+  -- Run via: source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python manage.py dbshell
+  DELETE FROM django_migrations WHERE app='uploads' AND name='0002_rename_fileupload_ingestfile';
+  DELETE FROM django_content_type WHERE app_label='uploads' AND model='ingestfile';
+  DROP TABLE IF EXISTS ingest_file;
+  ```
 
 ## Implementation Steps
 
@@ -53,6 +61,7 @@ Read these files before implementing any step. Each is listed with the specific 
 <!-- Amendment 2026-02-27: Clarified app name as "portal" per discussions.md -->
 <!-- Amendment 2026-02-28: Clarified migration file handling and physical rename steps per discussions.md -->
 <!-- Amendment 2026-02-28: Added table renames to portal_upload_* per discussions.md db_table naming decision -->
+<!-- Amendment 2026-02-28: Preflight — fixed migration chicken-and-egg, added FK ref updates in 0001_initial, added Step 6a/6b pre-migration -->
 
 ### Phase A: App Rename (uploads → portal)
 
@@ -75,6 +84,14 @@ Read these files before implementing any step. Each is listed with the specific 
     - `portal/migrations/__init__.py` (empty)
     - `portal/migrations/0001_initial.py`
   - **Verify**: `ls portal/models.py portal/migrations/0001_initial.py portal/apps.py`
+
+- [ ] **Step 1a**: Update FK references in `portal/migrations/0001_initial.py`
+  - **Files**: `portal/migrations/0001_initial.py` (modify)
+  - **Details**: After moving the migration file, update the `to=` FK reference strings from the old `uploads` app label to `portal`. These are read by Django's migration state builder to construct the model graph; leaving them as `uploads.*` will cause state errors since `uploads` is no longer in `INSTALLED_APPS`. This is safe because the migration is already applied — Django won't re-run it.
+    - Line 124: `to="uploads.uploadbatch"` → `to="portal.uploadbatch"`
+    - Line 213: `to="uploads.uploadfile"` → `to="portal.uploadfile"`
+    - Line 286: `to="uploads.uploadsession"` → `to="portal.uploadsession"`
+  - **Verify**: `grep -n 'to="uploads\.' portal/migrations/0001_initial.py` (should return zero results)
 
 - [ ] **Step 2**: Update `portal/apps.py` — app configuration
   - **Files**: `portal/apps.py` (modify)
@@ -117,7 +134,18 @@ Read these files before implementing any step. Each is listed with the specific 
     3. Update module docstring: `"""Celery tasks for the uploads app."""` → `"""Celery tasks for the portal app."""`
   - **Verify**: `grep -n "uploads\.tasks\." portal/tasks.py` (should return zero results)
 
-- [ ] **Step 6**: Update `db_table` values in `portal/models.py` and create rename migration
+- [ ] **Step 6a**: Pre-migration: update `django_migrations` and `django_content_type` outside of the migration framework
+  - **Files**: none (database-only operation)
+  - **Details**: Django's migration executor resolves dependencies by checking `django_migrations` for applied migrations. After renaming the directory to `portal/`, Django will look for `(app='portal', name='0001_initial')` but the row still says `app='uploads'`. This causes a chicken-and-egg problem: `0002_rename_app.py` depends on `0001_initial` being applied as `portal`, but the update happens inside the migration that can't run. **Fix**: Run the updates before `migrate`:
+    ```bash
+    source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python manage.py dbshell <<'SQL'
+    UPDATE django_migrations SET app = 'portal' WHERE app = 'uploads';
+    UPDATE django_content_type SET app_label = 'portal' WHERE app_label = 'uploads';
+    SQL
+    ```
+  - **Verify**: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python manage.py showmigrations portal` — should show `[X] 0001_initial`
+
+- [ ] **Step 6b**: Update `db_table` values in `portal/models.py` and create rename migration
   - **Files**: `portal/models.py` (modify), `portal/migrations/0002_rename_app.py` (new file)
   - **Details**:
     1. Update `portal/models.py` db_table values:
@@ -127,7 +155,7 @@ Read these files before implementing any step. Each is listed with the specific 
        - `UploadPart.Meta.db_table`: `"upload_part"` → `"portal_upload_part"` (line 199)
     2. Create manual migration `portal/migrations/0002_rename_app.py`:
        ```python
-       """Rename uploads app to portal: rename tables, update content types and migration history."""
+       """Rename uploads app to portal: rename database tables."""
 
        from django.db import migrations
 
@@ -155,19 +183,9 @@ Read these files before implementing any step. Each is listed with the specific 
                    "ALTER TABLE upload_part RENAME TO portal_upload_part",
                    "ALTER TABLE portal_upload_part RENAME TO upload_part",
                ),
-               # Update Django content types (critical for admin, permissions, generic relations)
-               migrations.RunSQL(
-                   "UPDATE django_content_type SET app_label = 'portal' WHERE app_label = 'uploads'",
-                   "UPDATE django_content_type SET app_label = 'uploads' WHERE app_label = 'portal'",
-               ),
-               # Update migration history (critical — prevents Django re-running 0001_initial)
-               migrations.RunSQL(
-                   "UPDATE django_migrations SET app = 'portal' WHERE app = 'uploads'",
-                   "UPDATE django_migrations SET app = 'uploads' WHERE app = 'portal'",
-               ),
            ]
        ```
-       Note: The migration's `dependencies` reference `("portal", "0001_initial")` because the physical directory has already been renamed. Django resolves the app label from the migration file's location.
+       Note: `django_migrations` and `django_content_type` updates are handled in Step 6a (pre-migration) to avoid the chicken-and-egg dependency problem. The migration only handles table renames.
   - **Verify**: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python manage.py migrate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python manage.py showmigrations portal`
 
 - [ ] **Step 7**: Verify app rename integrity
@@ -406,7 +424,7 @@ All steps are reversible:
 1. **Reverse model changes**: Revert `portal/models.py` to restore PROCESSED/DELETED statuses and remove `PortalEventOutbox`
 2. **Reverse migrations**: `DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python manage.py migrate portal 0001_initial` (reverts 0002 and 0003)
 3. **Reverse app rename**: `git mv portal uploads`, restore `uploads/apps.py` (`UploadsConfig`, `name="uploads"`), restore `"uploads"` in `boot/settings.py` INSTALLED_APPS, restore all `from uploads.*` imports, restore `uploads.tasks.*` task names
-4. **Reverse django_migrations**: The 0002 migration's reverse SQL restores `app='uploads'` in `django_migrations` and `app_label='uploads'` in `django_content_type`
+4. **Reverse django_migrations**: Manually run `UPDATE django_migrations SET app='uploads' WHERE app='portal'; UPDATE django_content_type SET app_label='uploads' WHERE app_label='portal';` (these were applied via Step 6a pre-migration, not via the migration file). Also restore FK references in `0001_initial.py` back to `uploads.*`
 
 For a full rollback: `git checkout HEAD -- uploads/ portal/ boot/settings.py frontend/ conftest.py` (assuming changes are committed) or `git stash` (if uncommitted).
 
@@ -492,28 +510,34 @@ For a full rollback: `git checkout HEAD -- uploads/ portal/ boot/settings.py fro
 - [ ] Read `PEPs/PEP_0008_canonical_domain_model/discussions.md` for resolved design decisions
 - [ ] Read `PEPs/PEP_0008_canonical_domain_model/research.md` for risk analysis and migration strategy
 - [ ] Verify prerequisites:
-  - [ ] PostgreSQL is running (`pg_isready`)
+  - [ ] Database accessible (SQLite in Dev)
   - [ ] Virtual environment activates successfully
   - [ ] All existing tests pass: `DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python manage.py test`
   - [ ] No unapplied migrations: `DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python manage.py migrate --check`
   - [ ] Ruff passes: `ruff check .`
+- [ ] Clean up orphaned database records from previous attempt (see Prerequisites section)
 - [ ] Create a clean git branch for the PEP work
 
 ### Phase 2: App Rename — Directory and Configuration (Steps 1–3)
 
 - [ ] **2.1** Physically rename `uploads/` → `portal/` using `git mv uploads portal` (Step 1)
 - [ ] **2.2** Verify all expected files exist under `portal/`: `models.py`, `admin.py`, `apps.py`, `tasks.py`, `services/uploads.py`, `services/sessions.py`, `migrations/0001_initial.py`, all test files
-- [ ] **2.3** Update `portal/apps.py` (Step 2):
+- [ ] **2.3** Update FK references in `portal/migrations/0001_initial.py` (Step 1a):
+  - [ ] `to="uploads.uploadbatch"` → `to="portal.uploadbatch"` (line 124)
+  - [ ] `to="uploads.uploadfile"` → `to="portal.uploadfile"` (line 213)
+  - [ ] `to="uploads.uploadsession"` → `to="portal.uploadsession"` (line 286)
+  - [ ] Verify: `grep -n 'to="uploads\.' portal/migrations/0001_initial.py` → zero results
+- [ ] **2.4** Update `portal/apps.py` (Step 2):
   - [ ] Rename class `UploadsConfig` → `PortalConfig`
   - [ ] Change `name = "uploads"` → `name = "portal"`
   - [ ] Change `verbose_name = "Uploads"` → `verbose_name = "Portal"`
   - [ ] Update module docstring
-- [ ] **2.4** Verify app config: `python -c "from portal.apps import PortalConfig; assert PortalConfig.name == 'portal'"`
-- [ ] **2.5** Update `boot/settings.py` (Step 3):
+- [ ] **2.5** Verify app config: `python -c "from portal.apps import PortalConfig; assert PortalConfig.name == 'portal'"`
+- [ ] **2.6** Update `boot/settings.py` (Step 3):
   - [ ] Change `"uploads"` → `"portal"` in `INSTALLED_APPS`
   - [ ] Change task path `"uploads.tasks.cleanup_expired_upload_files_task"` → `"portal.tasks.cleanup_expired_upload_files_task"` in `CELERY_BEAT_SCHEDULE`
   - [ ] Change task path `"uploads.tasks.notify_expiring_files_task"` → `"portal.tasks.notify_expiring_files_task"` in `CELERY_BEAT_SCHEDULE`
-- [ ] **2.6** Verify settings: `python -c "from boot.settings import Base; apps = Base.INSTALLED_APPS; assert 'portal' in apps and 'uploads' not in apps"`
+- [ ] **2.7** Verify settings: `python -c "from boot.settings import Base; apps = Base.INSTALLED_APPS; assert 'portal' in apps and 'uploads' not in apps"`
 
 ### Phase 3: App Rename — Import Updates (Steps 4–5)
 
@@ -531,20 +555,23 @@ For a full rollback: `git checkout HEAD -- uploads/ portal/ boot/settings.py fro
 - [ ] **3.6** Verify no orphaned `from uploads.` imports remain (excluding migrations and PEPs):
   `grep -r "from uploads\." --include="*.py" . | grep -v ".pyc" | grep -v "migrations/" | grep -v "PEPs/" | grep -v "__pycache__"` → zero results
 
-### Phase 4: App Rename — Migration and Table Renames (Step 6)
+### Phase 4: App Rename — Migration and Table Renames (Steps 6a–6b)
 
-- [ ] **4.1** Update `db_table` values in `portal/models.py` (Step 6):
+- [ ] **4.1** Run pre-migration SQL to update `django_migrations` and `django_content_type` (Step 6a):
+  - [ ] `UPDATE django_migrations SET app = 'portal' WHERE app = 'uploads'`
+  - [ ] `UPDATE django_content_type SET app_label = 'portal' WHERE app_label = 'uploads'`
+  - [ ] Verify: `python manage.py showmigrations portal` → shows `[X] 0001_initial`
+- [ ] **4.2** Update `db_table` values in `portal/models.py` (Step 6b):
   - [ ] `UploadBatch.Meta.db_table`: `"upload_batch"` → `"portal_upload_batch"`
   - [ ] `UploadFile.Meta.db_table`: `"upload_file"` → `"portal_upload_file"`
   - [ ] `UploadSession.Meta.db_table`: `"upload_session"` → `"portal_upload_session"`
   - [ ] `UploadPart.Meta.db_table`: `"upload_part"` → `"portal_upload_part"`
-- [ ] **4.2** Create manual migration `portal/migrations/0002_rename_app.py` with `RunSQL` operations for:
+- [ ] **4.3** Create manual migration `portal/migrations/0002_rename_app.py` with `RunSQL` operations for:
   - [ ] Rename all four tables (`ALTER TABLE upload_* RENAME TO portal_upload_*`)
-  - [ ] Update `django_content_type` rows (`app_label = 'uploads'` → `'portal'`)
-  - [ ] Update `django_migrations` rows (`app = 'uploads'` → `'portal'`)
-  - [ ] Include reverse SQL for all operations
-- [ ] **4.3** Apply migration: `python manage.py migrate`
-- [ ] **4.4** Verify migration applied: `python manage.py showmigrations portal` — shows `0001_initial` and `0002_rename_app` both `[X]`
+  - [ ] Include reverse SQL for all table renames
+  - [ ] (Note: `django_migrations` and `django_content_type` updates are handled in 4.1, NOT in the migration)
+- [ ] **4.4** Apply migration: `python manage.py migrate`
+- [ ] **4.5** Verify migration applied: `python manage.py showmigrations portal` — shows `0001_initial` and `0002_rename_app` both `[X]`
 
 ### Phase 5: App Rename — Verification (Step 7)
 

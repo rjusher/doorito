@@ -37,7 +37,7 @@ class Base(Configuration):
         "common",
         "accounts",
         "frontend",
-        "uploads",
+        "portal",
     ]
 
     MIDDLEWARE = [
@@ -152,7 +152,7 @@ class Base(Configuration):
 
         return {
             "cleanup-expired-upload-files": {
-                "task": "uploads.tasks.cleanup_expired_upload_files_task",
+                "task": "portal.tasks.cleanup_expired_upload_files_task",
                 "schedule": crontab(
                     minute=0, hour=f"*/{self.CLEANUP_UPLOADS_INTERVAL_HOURS}"
                 ),
@@ -169,7 +169,7 @@ class Base(Configuration):
                 "options": {"queue": "default"},
             },
             "notify-expiring-files": {
-                "task": "uploads.tasks.notify_expiring_files_task",
+                "task": "portal.tasks.notify_expiring_files_task",
                 "schedule": crontab(minute=0),
                 "options": {"queue": "default"},
             },

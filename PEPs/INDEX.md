@@ -4,7 +4,7 @@ Quick reference of all PEPs currently in the workflow. Update this table when a 
 
 | PEP  | Title                                      | Status   | Effort | Risk   | Depends On              |
 |------|--------------------------------------------|----------|--------|--------|-------------------------|
-| 0008 | Canonical Domain Model for OSS Ingest Portal | Proposed | L      | High   | —                       |
+| 0008 | Canonical Domain Model for OSS Ingest Portal | Implementing | L      | High   | —                       |
 | 0009 | Storage Backend Abstraction                | Proposed | M      | Medium | PEP 0008                |
 | 0010 | Authentication and API Access              | Proposed | M      | Medium | PEP 0008                |
 | 0011 | Upload Session Creation                    | Proposed | M      | Medium | PEP 0008, 0009, 0010    |

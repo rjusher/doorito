@@ -3,8 +3,8 @@
 import pytest
 from django.core.files.uploadedfile import SimpleUploadedFile
 
-from uploads.models import UploadFile, UploadSession
-from uploads.services.sessions import (
+from portal.models import UploadFile, UploadSession
+from portal.services.sessions import (
     complete_upload_session,
     create_upload_session,
     record_upload_part,

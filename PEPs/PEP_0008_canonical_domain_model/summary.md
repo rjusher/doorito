@@ -5,7 +5,7 @@
 | **PEP** | 0008 |
 | **Title** | Canonical Domain Model for OSS Ingest Portal |
 | **Author** | Doorito Team |
-| **Status** | Proposed |
+| **Status** | Implementing |
 | **Risk** | High |
 | **Created** | 2026-02-27 |
 | **Updated** | 2026-02-27 |

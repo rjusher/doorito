@@ -5,8 +5,8 @@ import logging
 from django.contrib import messages
 from django.shortcuts import redirect, render
 from django.views.decorators.http import require_http_methods
-from uploads.models import UploadFile
-from uploads.services.uploads import create_batch, create_upload_file, finalize_batch
+from portal.models import UploadFile
+from portal.services.uploads import create_batch, create_upload_file, finalize_batch
 
 from frontend.decorators import frontend_login_required
 

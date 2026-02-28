@@ -10,15 +10,13 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import override_settings
 from django.utils import timezone
 
-from uploads.models import UploadBatch, UploadFile
-from uploads.services.uploads import (
+from portal.models import UploadBatch, UploadFile
+from portal.services.uploads import (
     compute_sha256,
     create_batch,
     create_upload_file,
     finalize_batch,
-    mark_file_deleted,
     mark_file_failed,
-    mark_file_processed,
     notify_expiring_files,
     validate_file,
 )
@@ -127,32 +125,6 @@ class TestCreateUploadFile:
 
 
 @pytest.mark.django_db
-class TestMarkFileProcessed:
-    """Tests for mark_file_processed service."""
-
-    def test_stored_to_processed(self, user, tmp_path, settings):
-        """STORED file transitions to PROCESSED."""
-        settings.MEDIA_ROOT = tmp_path
-        file = SimpleUploadedFile("doc.pdf", b"content")
-        upload = create_upload_file(user, file)
-        assert upload.status == UploadFile.Status.STORED
-
-        result = mark_file_processed(upload)
-        assert result.status == UploadFile.Status.PROCESSED
-
-    def test_non_stored_raises_value_error(self, user, tmp_path, settings):
-        """Non-STORED file raises ValueError."""
-        settings.MEDIA_ROOT = tmp_path
-        settings.FILE_UPLOAD_MAX_SIZE = 1
-        file = SimpleUploadedFile("doc.pdf", b"content too large")
-        upload = create_upload_file(user, file)
-        assert upload.status == UploadFile.Status.FAILED
-
-        with pytest.raises(ValueError, match="expected 'stored'"):
-            mark_file_processed(upload)
-
-
-@pytest.mark.django_db
 class TestMarkFileFailed:
     """Tests for mark_file_failed service."""
 
@@ -165,22 +137,6 @@ class TestMarkFileFailed:
         result = mark_file_failed(upload, error="Virus detected")
         assert result.status == UploadFile.Status.FAILED
         assert result.error_message == "Virus detected"
-
-
-@pytest.mark.django_db
-class TestMarkFileDeleted:
-    """Tests for mark_file_deleted service."""
-
-    def test_deletes_physical_file_and_sets_status(self, user, tmp_path, settings):
-        """Deletes physical file and sets DELETED status."""
-        settings.MEDIA_ROOT = tmp_path
-        file = SimpleUploadedFile("doc.pdf", b"content")
-        upload = create_upload_file(user, file)
-        file_path = tmp_path / upload.file.name
-
-        result = mark_file_deleted(upload)
-        assert result.status == UploadFile.Status.DELETED
-        assert not file_path.exists()
 
 
 @pytest.mark.django_db
@@ -322,7 +278,7 @@ class TestNotifyExpiringFiles:
     def test_skips_non_stored_files(self, user, tmp_path, settings):
         """Files with status!=STORED are not notified."""
         upload = self._create_old_upload(user, tmp_path, settings, hours_ago=25)
-        upload.status = UploadFile.Status.PROCESSED
+        upload.status = UploadFile.Status.FAILED
         upload.save(update_fields=["status"])
         OutboxEvent.objects.filter(event_type="file.stored").delete()
 

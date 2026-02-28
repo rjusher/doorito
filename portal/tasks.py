@@ -1,4 +1,4 @@
-"""Celery tasks for the uploads app."""
+"""Celery tasks for the portal app."""
 
 import logging
 from datetime import timedelta
@@ -13,7 +13,7 @@ BATCH_SIZE = 1000
 
 
 @shared_task(
-    name="uploads.tasks.cleanup_expired_upload_files_task",
+    name="portal.tasks.cleanup_expired_upload_files_task",
     bind=True,
     max_retries=2,
     default_retry_delay=60,
@@ -30,7 +30,7 @@ def cleanup_expired_upload_files_task(self):
     """
     from django.conf import settings
 
-    from uploads.models import UploadFile
+    from portal.models import UploadFile
 
     ttl_hours = getattr(settings, "FILE_UPLOAD_TTL_HOURS", 24)
     cutoff = timezone.now() - timedelta(hours=ttl_hours)
@@ -67,7 +67,7 @@ def cleanup_expired_upload_files_task(self):
 
 
 @shared_task(
-    name="uploads.tasks.notify_expiring_files_task",
+    name="portal.tasks.notify_expiring_files_task",
     bind=True,
     max_retries=2,
     default_retry_delay=60,
@@ -81,7 +81,7 @@ def notify_expiring_files_task(self):
     Returns:
         dict: {"notified": int, "skipped": int}
     """
-    from uploads.services.uploads import notify_expiring_files
+    from portal.services.uploads import notify_expiring_files
 
     result = notify_expiring_files()
     if result["notified"] > 0:

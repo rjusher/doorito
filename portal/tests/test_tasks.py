@@ -6,8 +6,8 @@ import pytest
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.utils import timezone
 
-from uploads.models import UploadFile
-from uploads.tasks import cleanup_expired_upload_files_task
+from portal.models import UploadFile
+from portal.tasks import cleanup_expired_upload_files_task
 
 
 @pytest.fixture
@@ -83,7 +83,7 @@ class TestCleanupExpiredUploadFilesTask:
 
     def test_batch_limit_honored(self, make_upload, settings):
         """Only BATCH_SIZE upload files are deleted per run."""
-        from uploads import tasks
+        from portal import tasks
 
         original_batch_size = tasks.BATCH_SIZE
         tasks.BATCH_SIZE = 3

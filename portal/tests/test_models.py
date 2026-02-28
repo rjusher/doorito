@@ -6,7 +6,13 @@ import pytest
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import IntegrityError
 
-from uploads.models import UploadBatch, UploadFile, UploadPart, UploadSession
+from portal.models import (
+    PortalEventOutbox,
+    UploadBatch,
+    UploadFile,
+    UploadPart,
+    UploadSession,
+)
 
 
 @pytest.mark.django_db
@@ -219,9 +225,7 @@ class TestModelDefaults:
         assert set(UploadFile.Status.values) == {
             "uploading",
             "stored",
-            "processed",
             "failed",
-            "deleted",
         }
         assert set(UploadSession.Status.values) == {
             "init",
@@ -235,3 +239,100 @@ class TestModelDefaults:
             "received",
             "failed",
         }
+
+
+@pytest.mark.django_db
+class TestPortalEventOutboxUUID7PK:
+    """Verify PortalEventOutbox uses UUID v7 primary key."""
+
+    def test_uuid7_pk(self):
+        entry = PortalEventOutbox.objects.create(
+            aggregate_type="UploadFile",
+            aggregate_id="test-id",
+            event_type="file.stored",
+            idempotency_key="key1",
+        )
+        assert isinstance(entry.pk, uuid.UUID)
+        assert entry.pk.version == 7
+
+
+@pytest.mark.django_db
+class TestPortalEventOutboxStatusChoices:
+    """Verify PortalEventOutbox status choices."""
+
+    def test_status_choices(self):
+        assert set(PortalEventOutbox.Status.values) == {
+            "pending",
+            "delivered",
+            "failed",
+        }
+
+
+@pytest.mark.django_db
+class TestPortalEventOutboxUniqueConstraint:
+    """Verify unique constraint on (event_type, idempotency_key)."""
+
+    def test_duplicate_raises_integrity_error(self):
+        PortalEventOutbox.objects.create(
+            aggregate_type="UploadFile",
+            aggregate_id="id1",
+            event_type="file.stored",
+            idempotency_key="key1",
+        )
+        with pytest.raises(IntegrityError):
+            PortalEventOutbox.objects.create(
+                aggregate_type="UploadFile",
+                aggregate_id="id2",
+                event_type="file.stored",
+                idempotency_key="key1",
+            )
+
+
+@pytest.mark.django_db
+class TestPortalEventOutboxDefaults:
+    """Verify PortalEventOutbox default values."""
+
+    def test_defaults(self):
+        entry = PortalEventOutbox.objects.create(
+            aggregate_type="UploadFile",
+            aggregate_id="test-id",
+            event_type="file.stored",
+            idempotency_key="key1",
+        )
+        assert entry.status == "pending"
+        assert entry.attempts == 0
+        assert entry.max_attempts == 5
+        assert entry.payload == {}
+        assert entry.delivered_at is None
+        assert entry.error_message == ""
+
+
+@pytest.mark.django_db
+class TestPortalEventOutboxStr:
+    """Verify PortalEventOutbox __str__ method."""
+
+    def test_str_format(self):
+        entry = PortalEventOutbox.objects.create(
+            aggregate_type="UploadFile",
+            aggregate_id="test-id",
+            event_type="file.stored",
+            idempotency_key="key1",
+        )
+        assert str(entry) == "file.stored (Pending)"
+
+
+@pytest.mark.django_db
+class TestAdminRegistration:
+    """Verify all portal models are registered in admin."""
+
+    def test_all_portal_models_registered(self):
+        from django.contrib.admin.sites import site
+
+        for model in [
+            UploadBatch,
+            UploadFile,
+            UploadSession,
+            UploadPart,
+            PortalEventOutbox,
+        ]:
+            assert model in site._registry, f"{model.__name__} not registered in admin"

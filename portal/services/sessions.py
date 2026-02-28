@@ -1,11 +1,11 @@
-"""Upload session services for chunked upload lifecycle management."""
+"""Portal session services for chunked upload lifecycle management."""
 
 import logging
 import math
 
 from django.db import models, transaction
 
-from uploads.models import UploadFile, UploadPart, UploadSession
+from portal.models import UploadFile, UploadPart, UploadSession
 
 logger = logging.getLogger(__name__)
 

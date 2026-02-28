@@ -1,8 +1,9 @@
-"""Upload data models for batched, chunked file uploads."""
+"""Portal data models for batched, chunked file uploads and event outbox."""
 
 from common.models import TimeStampedModel
 from common.utils import uuid7
 from django.conf import settings
+from django.core.serializers.json import DjangoJSONEncoder
 from django.db import models
 
 
@@ -36,7 +37,7 @@ class UploadBatch(TimeStampedModel):
     )
 
     class Meta:
-        db_table = "upload_batch"
+        db_table = "portal_upload_batch"
         verbose_name = "upload batch"
         verbose_name_plural = "upload batches"
         ordering = ["-created_at"]
@@ -49,16 +50,14 @@ class UploadFile(TimeStampedModel):
     """Canonical file record for uploaded files.
 
     Status lifecycle:
-        uploading → stored → processed / deleted
+        uploading → stored
         uploading → failed
     """
 
     class Status(models.TextChoices):
         UPLOADING = "uploading", "Uploading"
         STORED = "stored", "Stored"
-        PROCESSED = "processed", "Processed"
         FAILED = "failed", "Failed"
-        DELETED = "deleted", "Deleted"
 
     id = models.UUIDField(primary_key=True, default=uuid7, editable=False)
     batch = models.ForeignKey(
@@ -89,7 +88,7 @@ class UploadFile(TimeStampedModel):
     error_message = models.TextField(blank=True)
 
     class Meta:
-        db_table = "upload_file"
+        db_table = "portal_upload_file"
         verbose_name = "upload file"
         verbose_name_plural = "upload files"
         ordering = ["-created_at"]
@@ -151,7 +150,7 @@ class UploadSession(TimeStampedModel):
     )
 
     class Meta:
-        db_table = "upload_session"
+        db_table = "portal_upload_session"
         verbose_name = "upload session"
         verbose_name_plural = "upload sessions"
         ordering = ["-created_at"]
@@ -196,7 +195,7 @@ class UploadPart(TimeStampedModel):
     )
 
     class Meta:
-        db_table = "upload_part"
+        db_table = "portal_upload_part"
         verbose_name = "upload part"
         verbose_name_plural = "upload parts"
         ordering = ["part_number"]
@@ -209,3 +208,57 @@ class UploadPart(TimeStampedModel):
 
     def __str__(self):
         return f"Part {self.part_number} of session {self.session_id}"
+
+
+class PortalEventOutbox(TimeStampedModel):
+    """Durable event queue for portal domain events.
+
+    Uses the generic aggregate_type/aggregate_id pattern (not FK-bound)
+    to support file, batch, and session-level events.
+
+    Status lifecycle:
+        pending → delivered (success)
+        pending → ... retry ... → failed (max retries exhausted)
+    """
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending"
+        DELIVERED = "delivered", "Delivered"
+        FAILED = "failed", "Failed"
+
+    id = models.UUIDField(primary_key=True, default=uuid7, editable=False)
+    aggregate_type = models.CharField(max_length=100)
+    aggregate_id = models.CharField(max_length=100)
+    event_type = models.CharField(max_length=100)
+    payload = models.JSONField(default=dict, encoder=DjangoJSONEncoder)
+    status = models.CharField(
+        max_length=20, choices=Status.choices, default=Status.PENDING
+    )
+    idempotency_key = models.CharField(max_length=255)
+    attempts = models.PositiveIntegerField(default=0)
+    max_attempts = models.PositiveIntegerField(default=5)
+    next_attempt_at = models.DateTimeField(null=True)
+    delivered_at = models.DateTimeField(null=True, blank=True)
+    error_message = models.TextField(blank=True)
+
+    class Meta:
+        db_table = "portal_event_outbox"
+        verbose_name = "portal event outbox"
+        verbose_name_plural = "portal event outbox entries"
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(
+                fields=["next_attempt_at"],
+                condition=models.Q(status="pending"),
+                name="idx_portal_outbox_pending_next",
+            ),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["event_type", "idempotency_key"],
+                name="unique_portal_event_type_idempotency_key",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.event_type} ({self.get_status_display()})"

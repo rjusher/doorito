@@ -1,8 +1,14 @@
-"""Admin configuration for upload models."""
+"""Admin configuration for portal models."""
 
 from django.contrib import admin
 
-from uploads.models import UploadBatch, UploadFile, UploadPart, UploadSession
+from portal.models import (
+    PortalEventOutbox,
+    UploadBatch,
+    UploadFile,
+    UploadPart,
+    UploadSession,
+)
 
 
 @admin.register(UploadBatch)
@@ -88,3 +94,39 @@ class UploadPartAdmin(admin.ModelAdmin):
     search_fields = ("pk", "session__pk")
     readonly_fields = ("pk", "created_at", "updated_at")
     list_select_related = ("session",)
+
+
+@admin.register(PortalEventOutbox)
+class PortalEventOutboxAdmin(admin.ModelAdmin):
+    """Admin interface for portal event outbox."""
+
+    list_display = (
+        "event_type",
+        "aggregate_type",
+        "aggregate_id",
+        "status",
+        "attempts",
+        "next_attempt_at",
+        "created_at",
+    )
+    list_filter = ("status", "event_type", "aggregate_type", "created_at")
+    search_fields = (
+        "event_type",
+        "aggregate_type",
+        "aggregate_id",
+        "idempotency_key",
+    )
+    readonly_fields = (
+        "pk",
+        "aggregate_type",
+        "aggregate_id",
+        "event_type",
+        "payload",
+        "idempotency_key",
+        "attempts",
+        "delivered_at",
+        "error_message",
+        "created_at",
+        "updated_at",
+    )
+    date_hierarchy = "created_at"

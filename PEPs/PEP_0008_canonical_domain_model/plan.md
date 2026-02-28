@@ -65,7 +65,7 @@ Read these files before implementing any step. Each is listed with the specific 
 
 ### Phase A: App Rename (uploads → portal)
 
-- [ ] **Step 1**: Physically rename `uploads/` directory to `portal/`
+- [x] **Step 1**: Physically rename `uploads/` directory to `portal/`
   - **Files**: `uploads/` → `portal/` (directory rename, includes `uploads/migrations/` → `portal/migrations/`)
   - **Details**: Use `git mv uploads portal` to rename the directory. This moves all files including:
     - `portal/__init__.py` (empty)
@@ -85,7 +85,7 @@ Read these files before implementing any step. Each is listed with the specific 
     - `portal/migrations/0001_initial.py`
   - **Verify**: `ls portal/models.py portal/migrations/0001_initial.py portal/apps.py`
 
-- [ ] **Step 1a**: Update FK references in `portal/migrations/0001_initial.py`
+- [x] **Step 1a**: Update FK references in `portal/migrations/0001_initial.py`
   - **Files**: `portal/migrations/0001_initial.py` (modify)
   - **Details**: After moving the migration file, update the `to=` FK reference strings from the old `uploads` app label to `portal`. These are read by Django's migration state builder to construct the model graph; leaving them as `uploads.*` will cause state errors since `uploads` is no longer in `INSTALLED_APPS`. This is safe because the migration is already applied — Django won't re-run it.
     - Line 124: `to="uploads.uploadbatch"` → `to="portal.uploadbatch"`
@@ -93,7 +93,7 @@ Read these files before implementing any step. Each is listed with the specific 
     - Line 286: `to="uploads.uploadsession"` → `to="portal.uploadsession"`
   - **Verify**: `grep -n 'to="uploads\.' portal/migrations/0001_initial.py` (should return zero results)
 
-- [ ] **Step 2**: Update `portal/apps.py` — app configuration
+- [x] **Step 2**: Update `portal/apps.py` — app configuration
   - **Files**: `portal/apps.py` (modify)
   - **Details**: Change `UploadsConfig` class:
     ```python
@@ -105,7 +105,7 @@ Read these files before implementing any step. Each is listed with the specific 
     Change class name from `UploadsConfig` to `PortalConfig`, `name` from `"uploads"` to `"portal"`, `verbose_name` from `"Uploads"` to `"Portal"`. Update module docstring to `"""Django AppConfig for the portal app."""`.
   - **Verify**: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && python -c "from portal.apps import PortalConfig; assert PortalConfig.name == 'portal'"`
 
-- [ ] **Step 3**: Update `boot/settings.py` — INSTALLED_APPS and CELERY_BEAT_SCHEDULE
+- [x] **Step 3**: Update `boot/settings.py` — INSTALLED_APPS and CELERY_BEAT_SCHEDULE
   - **Files**: `boot/settings.py` (modify)
   - **Details**:
     1. Line 40: Change `"uploads"` to `"portal"` in `INSTALLED_APPS`
@@ -113,7 +113,7 @@ Read these files before implementing any step. Each is listed with the specific 
     3. Line 172: Change `"task": "uploads.tasks.notify_expiring_files_task"` to `"task": "portal.tasks.notify_expiring_files_task"`
   - **Verify**: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && python -c "from boot.settings import Base; apps = Base.INSTALLED_APPS; assert 'portal' in apps and 'uploads' not in apps"`
 
-- [ ] **Step 4**: Update all `uploads.*` imports across the codebase
+- [x] **Step 4**: Update all `uploads.*` imports across the codebase
   - **Files** (8 files to modify):
     - `portal/models.py` — no internal `uploads.*` imports (uses `common.models`, `common.utils`, `django.*`)
     - `portal/admin.py` line 5: `from uploads.models import ...` → `from portal.models import ...`
@@ -126,7 +126,7 @@ Read these files before implementing any step. Each is listed with the specific 
   - **Details**: Simple find-and-replace of `from uploads.` to `from portal.` in all 8 files listed above. Do NOT change `upload_to="uploads/%Y/%m/"` in `portal/models.py` line 78 — that's a storage path, not a module import.
   - **Verify**: `grep -r "from uploads\." --include="*.py" . | grep -v ".pyc" | grep -v "migrations/" | grep -v "PEPs/" | grep -v "__pycache__"`  (should return zero results)
 
-- [ ] **Step 5**: Update task name strings in `portal/tasks.py`
+- [x] **Step 5**: Update task name strings in `portal/tasks.py`
   - **Files**: `portal/tasks.py` (modify)
   - **Details**:
     1. Line 16: `name="uploads.tasks.cleanup_expired_upload_files_task"` → `name="portal.tasks.cleanup_expired_upload_files_task"`
@@ -134,7 +134,7 @@ Read these files before implementing any step. Each is listed with the specific 
     3. Update module docstring: `"""Celery tasks for the uploads app."""` → `"""Celery tasks for the portal app."""`
   - **Verify**: `grep -n "uploads\.tasks\." portal/tasks.py` (should return zero results)
 
-- [ ] **Step 6a**: Pre-migration: update `django_migrations` and `django_content_type` outside of the migration framework
+- [x] **Step 6a**: Pre-migration: update `django_migrations` and `django_content_type` outside of the migration framework
   - **Files**: none (database-only operation)
   - **Details**: Django's migration executor resolves dependencies by checking `django_migrations` for applied migrations. After renaming the directory to `portal/`, Django will look for `(app='portal', name='0001_initial')` but the row still says `app='uploads'`. This causes a chicken-and-egg problem: `0002_rename_app.py` depends on `0001_initial` being applied as `portal`, but the update happens inside the migration that can't run. **Fix**: Run the updates before `migrate`:
     ```bash
@@ -145,7 +145,7 @@ Read these files before implementing any step. Each is listed with the specific 
     ```
   - **Verify**: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python manage.py showmigrations portal` — should show `[X] 0001_initial`
 
-- [ ] **Step 6b**: Update `db_table` values in `portal/models.py` and create rename migration
+- [x] **Step 6b**: Update `db_table` values in `portal/models.py` and create rename migration
   - **Files**: `portal/models.py` (modify), `portal/migrations/0002_rename_app.py` (new file)
   - **Details**:
     1. Update `portal/models.py` db_table values:
@@ -188,7 +188,7 @@ Read these files before implementing any step. Each is listed with the specific 
        Note: `django_migrations` and `django_content_type` updates are handled in Step 6a (pre-migration) to avoid the chicken-and-egg dependency problem. The migration only handles table renames.
   - **Verify**: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python manage.py migrate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python manage.py showmigrations portal`
 
-- [ ] **Step 7**: Verify app rename integrity
+- [x] **Step 7**: Verify app rename integrity
   - **Files**: none (verification only)
   - **Details**: Confirm the app rename is fully consistent:
     1. `showmigrations portal` shows both `0001_initial` and `0002_rename_app` as applied
@@ -198,7 +198,7 @@ Read these files before implementing any step. Each is listed with the specific 
 
 ### Phase B: Model Changes (Status Simplification + PortalEventOutbox)
 
-- [ ] **Step 8**: Simplify UploadFile status choices from 5 → 3
+- [x] **Step 8**: Simplify UploadFile status choices from 5 → 3
   - **Files**: `portal/models.py` (modify)
   - **Details**: In `UploadFile.Status` TextChoices class (currently at line 56–61):
     - Remove: `PROCESSED = "processed", "Processed"` (line 59)
@@ -208,7 +208,7 @@ Read these files before implementing any step. Each is listed with the specific 
     - Keep **all existing fields unchanged**: `file` (FileField), `sha256`, `size_bytes`, `original_filename`, `content_type`, `uploaded_by`, `batch`, `error_message`, `metadata`, `status`. Keep all existing indexes unchanged.
   - **Verify**: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && python -c "from portal.models import UploadFile; assert set(UploadFile.Status.values) == {'uploading', 'stored', 'failed'}"`
 
-- [ ] **Step 9**: Define PortalEventOutbox model
+- [x] **Step 9**: Define PortalEventOutbox model
   - **Files**: `portal/models.py` (modify — add new model class at end of file)
   - **Details**: Add `PortalEventOutbox` class after `UploadPart`, modeled after `common.models.OutboxEvent` (lines 19–67 of `common/models.py`). Import `DjangoJSONEncoder` from `django.core.serializers.json` at the top of the file.
     ```python
@@ -269,7 +269,7 @@ Read these files before implementing any step. Each is listed with the specific 
     Add import for `models.Q` — already available via `from django.db import models`.
   - **Verify**: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && python -c "from portal.models import PortalEventOutbox; print(PortalEventOutbox._meta.db_table)"`
 
-- [ ] **Step 10**: Generate and apply migrations for status change and new model
+- [x] **Step 10**: Generate and apply migrations for status change and new model
   - **Files**: `portal/migrations/0003_*.py` (auto-generated)
   - **Details**: Run `makemigrations portal` to generate the migration for:
     1. UploadFile status choices change (5 → 3)
@@ -279,7 +279,7 @@ Read these files before implementing any step. Each is listed with the specific 
 
 ### Phase C: Service and Task Updates
 
-- [ ] **Step 11**: Update service functions for status simplification
+- [x] **Step 11**: Update service functions for status simplification
   - **Files**: `portal/services/uploads.py` (modify)
   - **Details**:
     1. **Remove `mark_file_processed()` function** (lines 149–177): Delete entirely — PROCESSED status no longer exists
@@ -290,19 +290,19 @@ Read these files before implementing any step. Each is listed with the specific 
     6. Remove `import contextlib` (line 3) — only used by the deleted `mark_file_deleted` function
   - **Verify**: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && cd /home/rjusher/doorito && ruff check portal/services/uploads.py`
 
-- [ ] **Step 12**: Update session services module docstring
+- [x] **Step 12**: Update session services module docstring
   - **Files**: `portal/services/sessions.py` (modify)
   - **Details**: Update module docstring from `"""Upload session services for chunked upload lifecycle management."""` to `"""Portal session services for chunked upload lifecycle management."""`. No other changes needed — all function signatures and logic remain the same.
   - **Verify**: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && cd /home/rjusher/doorito && ruff check portal/services/sessions.py`
 
-- [ ] **Step 13**: Update task module docstring
+- [x] **Step 13**: Update task module docstring
   - **Files**: `portal/tasks.py` (modify)
   - **Details**: Update module docstring from `"""Celery tasks for the portal app."""` (already updated in Step 5) — verify it was changed. No other task logic changes needed.
   - **Verify**: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && cd /home/rjusher/doorito && ruff check portal/tasks.py`
 
 ### Phase D: Admin Update
 
-- [ ] **Step 14**: Add PortalEventOutboxAdmin to `portal/admin.py`
+- [x] **Step 14**: Add PortalEventOutboxAdmin to `portal/admin.py`
   - **Files**: `portal/admin.py` (modify)
   - **Details**:
     1. Update import line to include `PortalEventOutbox`: `from portal.models import UploadBatch, UploadFile, UploadPart, UploadSession, PortalEventOutbox`
@@ -348,7 +348,7 @@ Read these files before implementing any step. Each is listed with the specific 
 
 ### Phase E: Test Updates
 
-- [ ] **Step 15**: Update test imports and assertions for app rename and status simplification
+- [x] **Step 15**: Update test imports and assertions for app rename and status simplification
   - **Files** (5 test files to modify):
     1. **`portal/tests/test_models.py`**:
        - Line 9: `from uploads.models import ...` → `from portal.models import ...`
@@ -372,7 +372,7 @@ Read these files before implementing any step. Each is listed with the specific 
 
 ### Phase F: New Tests for PortalEventOutbox
 
-- [ ] **Step 16**: Add PortalEventOutbox model tests
+- [x] **Step 16**: Add PortalEventOutbox model tests
   - **Files**: `portal/tests/test_models.py` (modify — add new test classes)
   - **Details**: Add these test classes to the existing test file:
     1. **`TestPortalEventOutboxUUID7PK`**: Create a `PortalEventOutbox` instance, verify `pk` is `uuid.UUID` with `version == 7`
@@ -383,7 +383,7 @@ Read these files before implementing any step. Each is listed with the specific 
     Add import for `PortalEventOutbox` to the existing imports from `portal.models`.
   - **Verify**: `source ~/.virtualenvs/inventlily-d22a143/bin/activate && DJANGO_SETTINGS_MODULE=boot.settings DJANGO_CONFIGURATION=Dev python manage.py test portal.tests.test_models`
 
-- [ ] **Step 17**: Add admin registration test for PortalEventOutbox
+- [x] **Step 17**: Add admin registration test for PortalEventOutbox
   - **Files**: `portal/tests/test_models.py` (modify — add test)
   - **Details**: Add a test that verifies all 5 portal models are registered in the admin site:
     ```python

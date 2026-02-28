@@ -1,6 +1,5 @@
-"""Upload services for file validation, creation, and status transitions."""
+"""Portal upload services for file validation, creation, and status transitions."""
 
-import contextlib
 import hashlib
 import logging
 import mimetypes
@@ -12,7 +11,7 @@ from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
-from uploads.models import UploadBatch, UploadFile
+from portal.models import UploadBatch, UploadFile
 
 logger = logging.getLogger(__name__)
 
@@ -146,37 +145,6 @@ def create_upload_file(user, file, batch=None):
     return upload
 
 
-def mark_file_processed(upload_file):
-    """Transition an upload file from STORED to PROCESSED.
-
-    Uses an atomic UPDATE with a WHERE clause on status to prevent
-    race conditions.
-
-    Args:
-        upload_file: An UploadFile instance.
-
-    Returns:
-        The updated UploadFile instance.
-
-    Raises:
-        ValueError: If the file is not in STORED status.
-    """
-    updated = UploadFile.objects.filter(
-        pk=upload_file.pk,
-        status=UploadFile.Status.STORED,
-    ).update(status=UploadFile.Status.PROCESSED)
-
-    if updated == 0:
-        raise ValueError(
-            f"Cannot mark upload file {upload_file.pk} as processed: "
-            f"status is '{upload_file.status}', expected 'stored'."
-        )
-
-    upload_file.refresh_from_db()
-    logger.info("Upload file processed: pk=%s", upload_file.pk)
-    return upload_file
-
-
 def mark_file_failed(upload_file, error=""):
     """Transition an upload file to FAILED status.
 
@@ -191,24 +159,6 @@ def mark_file_failed(upload_file, error=""):
     upload_file.error_message = error
     upload_file.save(update_fields=["status", "error_message", "updated_at"])
     logger.warning("Upload file failed: pk=%s error=%s", upload_file.pk, error)
-    return upload_file
-
-
-def mark_file_deleted(upload_file):
-    """Transition an upload file to DELETED status and remove the physical file.
-
-    Args:
-        upload_file: An UploadFile instance.
-
-    Returns:
-        The updated UploadFile instance.
-    """
-    with contextlib.suppress(FileNotFoundError):
-        upload_file.file.delete(save=False)
-
-    upload_file.status = UploadFile.Status.DELETED
-    upload_file.save(update_fields=["status", "updated_at"])
-    logger.info("Upload file deleted: pk=%s", upload_file.pk)
     return upload_file
 
 
@@ -240,8 +190,8 @@ def finalize_batch(batch):
     """Finalize a batch based on its files' statuses.
 
     Transitions batch to:
-    - COMPLETE: all files are STORED or PROCESSED
-    - PARTIAL: some files are STORED/PROCESSED, some FAILED
+    - COMPLETE: all files are STORED
+    - PARTIAL: some files are STORED, some FAILED
     - FAILED: all files are FAILED (or no files)
 
     Args:
@@ -255,7 +205,7 @@ def finalize_batch(batch):
     if not file_statuses:
         batch.status = UploadBatch.Status.FAILED
     else:
-        success_statuses = {UploadFile.Status.STORED, UploadFile.Status.PROCESSED}
+        success_statuses = {UploadFile.Status.STORED}
         successes = sum(1 for s in file_statuses if s in success_statuses)
         failures = sum(1 for s in file_statuses if s == UploadFile.Status.FAILED)
 

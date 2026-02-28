@@ -3,7 +3,7 @@
 import pytest
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client
-from uploads.models import UploadBatch, UploadFile
+from portal.models import UploadBatch, UploadFile
 
 # Override staticfiles storage to avoid WhiteNoise manifest issues in tests
 _SIMPLE_STORAGES = {

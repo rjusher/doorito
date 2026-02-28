@@ -23,31 +23,34 @@ The existing upload models (UploadBatch, UploadFile, UploadSession, UploadPart) 
 
 Implement the following Django models forming the canonical domain for the OSS ingest portal:
 
-- **IngestFile** — Canonical file identity with status lifecycle (UPLOADING, STORED, FAILED)
-- **UploadSession** — Tracks a single chunked upload attempt (1:1 with IngestFile)
+- **UploadFile** — Canonical file identity with simplified status lifecycle (UPLOADING, STORED, FAILED)
+- **UploadSession** — Tracks a single chunked upload attempt (1:1 with UploadFile)
 - **UploadPart** — Individual chunk within an upload session (1:N under UploadSession)
 - **UploadBatch** — Optional grouping of multiple files for batch operations
-- **PortalEventOutbox** — Durable event queue for reliable downstream integration
+- **PortalEventOutbox** — Durable event queue for reliable downstream integration (generic aggregate pattern, not FK-bound)
 
 ### Model Relationships
 
 ```
 UploadBatch
-└── IngestFile
+└── UploadFile
     ├── UploadSession (1:1)
     │   └── UploadPart (1:N)
-    └── PortalEventOutbox (1:N)
+
+PortalEventOutbox (references any aggregate via aggregate_type/aggregate_id)
 ```
 
 ### Model Invariants
 
-- `IngestFile.status = STORED` implies: `sha256` is populated, `size_bytes` is populated, storage pointer is populated
+<!-- Amendment 2026-02-27: Clarified "storage pointer" — remains FileField until PEP 0009 per discussions.md -->
+- `UploadFile.status = STORED` implies: `sha256` is populated, `size_bytes` is populated, file is stored (FileField non-blank; explicit storage fields deferred to PEP 0009)
 - `UploadPart` must be unique per `(session, part_number)`
-- `PortalEventOutbox` entries must only be created after file is `STORED`
+- `PortalEventOutbox` entries for file aggregates must only be created after the file is `STORED` (enforced in service layer)
+- `PortalEventOutbox` uses `aggregate_type`/`aggregate_id` (not FK) to reference portal entities
 
 ## Rationale
 
-Separating upload lifecycle (`UploadSession`) from file identity (`IngestFile`) ensures resumable uploads without corrupting the canonical file record. The session captures the transient state of a chunked upload, while the file record represents the permanent, verified artifact.
+Separating upload lifecycle (`UploadSession`) from file identity (`UploadFile`) ensures resumable uploads without corrupting the canonical file record. The session captures the transient state of a chunked upload, while the file record represents the permanent, verified artifact.
 
 The `PortalEventOutbox` is kept as a separate model (rather than reusing `common.OutboxEvent`) to maintain domain isolation and allow portal-specific event schemas and delivery policies.
 
@@ -71,7 +74,7 @@ The `PortalEventOutbox` is kept as a separate model (rather than reusing `common
 
 ### Affected Components
 
-- **Models**: New models in a portal/ingest app — IngestFile, UploadSession, UploadPart, UploadBatch, PortalEventOutbox
+- **Models**: Existing models evolved in portal app — UploadFile (status simplified), UploadSession, UploadPart, UploadBatch; new PortalEventOutbox model
 - **Services**: New service layer for model operations (to be defined in subsequent PEPs)
 - **Admin**: New admin registrations for all portal models
 - **Tasks**: None initially (defined in subsequent PEPs)
@@ -93,13 +96,16 @@ The `PortalEventOutbox` is kept as a separate model (rather than reusing `common
 - Storage backend abstraction (PEP 0009)
 - Event schema definition (PEP 0016)
 - Outbox dispatcher logic (PEP 0017)
-- Service layer implementation beyond model-level validation
+- New service layer features (chunked upload orchestration, storage abstraction)
+
+<!-- Amendment 2026-02-28: Clarified per discussions.md — maintaining existing service functions and basic model-lifecycle validations ARE in scope; only new service features are out of scope -->
 
 ## Acceptance Criteria
 
 - [ ] Unique constraint on `(session, part_number)` is enforced at the database level
-- [ ] File cannot be marked `STORED` without required metadata (sha256, size_bytes, storage pointer) — enforced in service layer
-- [ ] `PortalEventOutbox` entries cannot be created unless the associated file is `STORED`
+<!-- Amendment 2026-02-27: Clarified storage pointer — remains FileField until PEP 0009 -->
+- [ ] File cannot be marked `STORED` without required metadata (sha256, size_bytes, file stored) — enforced in service layer
+- [ ] `PortalEventOutbox` entries for file aggregates cannot be created unless the referenced file is `STORED` (enforced in service layer)
 - [ ] All models inherit from `TimeStampedModel` and use `uuid7` primary keys
 - [ ] Database migrations are generated and apply cleanly
 - [ ] `python manage.py check` passes
@@ -114,3 +120,5 @@ The `PortalEventOutbox` is kept as a separate model (rather than reusing `common
 | Date | From | To | Notes |
 |------|------|----|-------|
 | 2026-02-27 | — | Proposed | Initial creation |
+| 2026-02-28 | — | — | Discussions pass: resolved migration handling, test updates, index naming, stale aggregate_type Q |
+| 2026-02-28 | — | — | Review pass: resolved db_table naming — rename existing tables to portal_upload_* prefix |
